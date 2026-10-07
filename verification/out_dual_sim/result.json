@@ -1,0 +1,68 @@
+{
+  "when": "2026-09-29T16:25:18.662194+00:00",
+  "workdir": "C:\\Users\\GAMEPO~1\\AppData\\Local\\Temp\\neurosync_dualsim_gxz33f7t",
+  "main": {
+    "device": "SIMULATED BrainBit Classic / Black (4 channels, 250 Hz)",
+    "channels": [
+      "O1",
+      "O2",
+      "T3",
+      "T4"
+    ],
+    "samples": 7100,
+    "report_valid": true,
+    "dominant": "Alpha",
+    "dominant_pct": 92.09785832679046,
+    "peak_hz": 10.0,
+    "predominant_label": "PREDOMINANT RHYTHM \u00b7 ALPHA \u00b7 92.1% of 1\u201345 Hz \u00b7 peak 10.0 Hz  (5 s window)",
+    "avg_curve_points": 1250,
+    "map_rendered": true,
+    "channel_rows": 4
+  },
+  "second": {
+    "device": "SIMULATED DragonEEG / NeuroEEG (21 scalp sites, 250 Hz)",
+    "channels": [
+      "Fp1",
+      "F7",
+      "F3",
+      "Fz",
+      "Fpz",
+      "Fp2",
+      "F8",
+      "F4",
+      "T3",
+      "C3",
+      "Cz",
+      "C4",
+      "T4",
+      "T5",
+      "P3",
+      "Pz",
+      "P4",
+      "T6",
+      "O1",
+      "Oz",
+      "O2"
+    ],
+    "samples": 7090,
+    "report_valid": true,
+    "dominant": "Alpha",
+    "dominant_pct": 89.57765702910696,
+    "predominant_label": "PREDOMINANT RHYTHM \u00b7 ALPHA \u00b7 89.6% of 1\u201345 Hz \u00b7 peak 10.0 Hz",
+    "map_rendered": true
+  },
+  "screenshots": true,
+  "saved_sessions": {
+    "main": 1,
+    "second": 1
+  },
+  "patient_report": {
+    "path": "C:\\Users\\GAMEPOWER\\projects\\neurosync\\verification\\out_dual_sim\\patient_report_sim_verify.html",
+    "bytes": 895916,
+    "has_simulated_banner": true,
+    "has_embedded_charts": true,
+    "embedded_chart_count": 9,
+    "has_interpretation_helper": true,
+    "has_history_table": true
+  }
+}

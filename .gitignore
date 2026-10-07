@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Local runtime data — measured sessions and subject folders (privacy)
+recordings/
+
+# Local logs / runtime state
+logs/
+runtime_status.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "model": "qwen3.8:latest",
+  "text": "Data status: Valid. The 5-second summary used 1,250 samples, and the stable estimate used 60 seconds (30 epochs). Contact resistance is 500,000 ohms on all four electrodes, which is below the 1 MOhm threshold investigated by this app.\n\nMeasured activity: Both summaries show Alpha as the sole dominant band at 100% relative share, with a peak frequency of 10 Hz. Alpha power is 71.993 \u00b5V\u00b2. Delta, Theta, Beta, and Gamma bands show 0.0 \u00b5V\u00b2 power and 0% relative share. All four channels (O1, O2, T3, T4) report identical Alpha dominance with no quality flags.\n\nSignal quality: No flags were raised for any channel. Standard improvements include ensuring proper skin preparation and electrode contact, reducing jaw and facial muscle tension, minimizing blinking and movement, rechecking headband placement, and addressing mains or line-noise sources.\n\nThese short spectral summaries describe measured activity at these electrodes at the measured time only.\n\nAssistive description only - not a medical interpretation.",
+  "elapsed_s": 13.3
+}

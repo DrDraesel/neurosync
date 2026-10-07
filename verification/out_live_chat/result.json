@@ -1,0 +1,11 @@
+{
+  "when": "2026-10-05T14:09:18.941384+00:00",
+  "platform": "windows",
+  "device": "SIMULATED BrainBit Classic / Black (4 channels, 250 Hz)",
+  "updates": 2,
+  "status": "Last reply 10:09:52 (7.4 s \u00b7 qwen3.8:latest, local) \u00b7 assistive description, not a diagnosis.",
+  "chat_text": "LOCAL MODEL \u00b7 live update #1This update is a pipeline demonstration using the built-in simulator; no physical headset is connected. The data is valid, with zero gap events and stable 250 Hz sampling. The signal is dominated by the Alpha band, accounting for 92.2% of total power with a peak at 10.0 Hz. This distribution is consistent across all four channels (O1, O2, T3, T4), with no quality flags or exclusions in the stable estimate. Contact resistances range from approximately 158 kOhm to 210 kOhm, which are well below the 1 MOhm threshold of interest for this application. No corrective actions are required as all quality checks passed.LOCAL MODEL \u00b7 live update #2This update is a pipeline demonstration using the built-in simulator; no physical headset is connected. The data is valid, with zero gap events and stable 250 Hz sampling. The signal remains dominated by the Alpha band, accounting for 92.4% of total power with a peak at 10.0 Hz. This distribution is consistent across all four channels (O1, O2, T3, T4), with no quality flags or exclusions in the stable estimate. Contact resistances range from approximately 158 kOhm to 210 kOhm, which are well below the 1 MOhm threshold of interest for this application. No corrective actions are required as all quality checks passed.",
+  "warm_model": "qwen3.8:latest",
+  "simulated_stated": false,
+  "screenshots": true
+}

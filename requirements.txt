@@ -1,0 +1,6 @@
+# NeuroSync — Python 3.11 (Windows, PyQt6 desktop)
+PyQt6==6.11.0
+pyqtgraph==0.14.0
+numpy==2.4.6
+scipy==1.17.1
+pyneurosdk2==1.0.15

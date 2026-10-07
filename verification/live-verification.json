@@ -1,0 +1,44 @@
+{
+  "source": "LIVE SDK; no generated samples",
+  "total_samples": 1336,
+  "raw_curve_points": {
+    "O1": 1250,
+    "O2": 1250,
+    "T3": 1250,
+    "T4": 1250
+  },
+  "band_curve_points": {
+    "Delta": 1250,
+    "Theta": 1250,
+    "Alpha": 1250,
+    "Beta": 1250,
+    "Gamma": 1250
+  },
+  "band_colors": {
+    "Delta": "#b69cff",
+    "Theta": "#64b5f6",
+    "Alpha": "#69db9c",
+    "Beta": "#ffb454",
+    "Gamma": "#f28bcb"
+  },
+  "contact": {
+    "ohms": {
+      "O1": null,
+      "O2": null,
+      "T3": null,
+      "T4": null
+    },
+    "measured_monotonic": 321731.828
+  },
+  "analysis_valid": false,
+  "analysis_reason": "O1: contact_unverified, saturated_or_offset; O2: contact_unverified, saturated_or_offset; T3: contact_unverified, saturated_or_offset; T4: contact_unverified, saturated_or_offset",
+  "dominant": null,
+  "transport": {
+    "samples": 1092,
+    "rate_hz": 250.5,
+    "gap_events": 2,
+    "battery": 89,
+    "mode": "signal",
+    "last_sample_age_s": 0.01600000000325963
+  }
+}
