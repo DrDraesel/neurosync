@@ -33,7 +33,7 @@ Everything is local — "anywhere" means: set the app up once on that PC, pair t
 headset there. (Only one app may connect to a headset at a time.)
 
 1. Install Python 3.11 (https://www.python.org/downloads/ — check "Add python.exe to PATH").
-2. Get this folder onto the PC: `git clone` the repo (private — sign in to GitHub first) or copy the folder.
+2. Get this folder onto the PC: `git clone` the repo (public — no login needed) or copy the folder.
 3. Run `setup.cmd` (one time; creates `.venv`, installs the pinned requirements).
 4. Run `Start NeuroSync.cmd`, scan for the headset, connect.
 5. Optional — AI doctor / live chat: install Ollama on that PC with the `qwen3.8:latest` model.
