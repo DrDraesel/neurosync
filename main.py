@@ -914,8 +914,8 @@ class NeuroSyncApp(QMainWindow):
         self.ai_button.clicked.connect(self.run_ai_doctor)
         ai_row.addWidget(self.ai_button); ai_row.addWidget(self.ai_auto); ai_row.addStretch()
         right.addLayout(ai_row)
-        self.ai_status = QLabel('Model: ' + ai_doctor.DEFAULT_MODEL
-                                + ' · endpoint ' + ai_doctor.DEFAULT_ENDPOINT + ' · offline check on use')
+        self.ai_status = QLabel('Model: ' + ai_doctor.effective_model()
+                                + ' · endpoint ' + ai_doctor.endpoint_label() + ' · offline check on use')
         self.ai_status.setWordWrap(True); self.ai_status.setStyleSheet('color:#9aadba; font-size:11px;')
         right.addWidget(self.ai_status)
         self.ai_text = QLabel('Ask for an assistive description of the latest measured numbers. Only '
@@ -1870,9 +1870,10 @@ class NeuroSyncApp(QMainWindow):
                                           contact=self.contact['ohms'] if self.contact else None)
         self.ai_requested_at = time.monotonic()
         self.ai_button.setEnabled(False)
-        self.ai_status.setText(f'Asking {ai_doctor.DEFAULT_MODEL} on the local endpoint… '
+        where = 'the API' if ai_doctor.api_mode() else 'the local endpoint'
+        self.ai_status.setText(f'Asking {ai_doctor.effective_model()} on {where}… '
                                '(this can take up to a minute)')
-        self.ai_worker = AIDoctorWorker(payload, ai_doctor.DEFAULT_MODEL, self)
+        self.ai_worker = AIDoctorWorker(payload, ai_doctor.effective_model(), self)
         self.ai_worker.note_ready.connect(self.handle_ai_note)
         self.ai_worker.start()
 
@@ -1884,12 +1885,16 @@ class NeuroSyncApp(QMainWindow):
         self.ai_note = note
         if note['ok']:
             self.ai_text.setText(note['text'] + '\n\n' + ai_doctor.DISCLAIMER)
-            self.ai_status.setText(f"Answered by {note['model']} (local) at "
+            origin = 'API' if ai_doctor.api_mode() else 'local'
+            self.ai_status.setText(f"Answered by {note['model']} ({origin}) at "
                                    f"{note['generated_at'][11:19]} UTC · assistive description, not a diagnosis")
         else:
             self.ai_text.setText('AI doctor unavailable: ' + note['error']
                                  + '\n\nNo substitute analysis is shown.')
-            self.ai_status.setText('Local model unavailable — start Ollama and ask again.')
+            if ai_doctor.api_mode():
+                self.ai_status.setText('API model unavailable — check AI_API_URL / AI_API_KEY and ask again.')
+            else:
+                self.ai_status.setText('Local model unavailable — start Ollama and ask again.')
         self.update_buttons()
 
     # -------------------------------------------------------------- live chat
@@ -1912,7 +1917,7 @@ class NeuroSyncApp(QMainWindow):
             self.chat_toggle.setText('⏹ Stop live monitor')
             self._set_chat_status('On — preloading the local model (the first reply can take '
                                   'a minute on a cold model)…')
-            threading.Thread(target=lambda: ai_doctor.warm(ai_doctor.DEFAULT_MODEL),
+            threading.Thread(target=lambda: ai_doctor.warm(ai_doctor.effective_model()),
                              daemon=True).start()
             self._show_chat()
             self.maybe_chat_update()
@@ -1959,14 +1964,19 @@ class NeuroSyncApp(QMainWindow):
                 self.chat_history = self.chat_history[-CHAT_HISTORY_MAX * 2:]
             started = getattr(self, '_chat_started', None)
             took = f'{(time.monotonic() - started):.1f} s · ' if started else ''
+            origin = 'API' if ai_doctor.api_mode() else 'local'
             self._set_chat_status(
-                f'Last reply {time.strftime("%H:%M:%S")} ({took}{result.get("model")}, local) '
+                f'Last reply {time.strftime("%H:%M:%S")} ({took}{result.get("model")}, {origin}) '
                 '· assistive description, not a diagnosis.')
         else:
             error = str(result.get('error') or 'unknown error')
-            self._chat_append('sys', 'Local model error: ' + error
+            label = 'API' if ai_doctor.api_mode() else 'Local model'
+            self._chat_append('sys', label + ' error: ' + error
                               + '\nNo substitute analysis is shown.')
-            self._set_chat_status(f'Local model error — is Ollama running at {ai_doctor.DEFAULT_ENDPOINT}?')
+            if ai_doctor.api_mode():
+                self._set_chat_status('API model error — check AI_API_URL / AI_API_KEY and try again.')
+            else:
+                self._set_chat_status(f'Local model error — is Ollama running at {ai_doctor.DEFAULT_ENDPOINT}?')
         self.update_buttons()
 
     def _chat_request(self, question=None):
@@ -1998,7 +2008,7 @@ class NeuroSyncApp(QMainWindow):
         self.chat_last_at = time.monotonic()
         self._chat_started = self.chat_last_at
         self._set_chat_status('Streaming ' + meta + '…')
-        self.chat_worker = LiveChatWorker(messages, ai_doctor.DEFAULT_MODEL, self)
+        self.chat_worker = LiveChatWorker(messages, ai_doctor.effective_model(), self)
         self.chat_worker.chunk_ready.connect(self._chat_chunk)
         self.chat_worker.finished_run.connect(self._chat_done)
         self.chat_worker.start()

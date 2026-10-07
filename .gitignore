@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 .venv/
 
+# Local AI settings (may contain an API key — never commit)
+ai_settings.env
+
 # Local runtime data — measured sessions and subject folders (privacy)
 recordings/
 

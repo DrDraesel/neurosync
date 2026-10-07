@@ -1,14 +1,18 @@
-"""Local "AI doctor": descriptive, non-diagnostic EEG analysis assistance.
+"""AI doctor: descriptive, non-diagnostic EEG analysis assistance.
 
 Sends ONLY derived numbers (band powers, relative shares, quality flags,
-transport counters, device metadata) to the LOCAL Ollama server on
-127.0.0.1:11434. Raw EEG samples and personal identifiers are never included
-and nothing is sent to the internet. The reply is an assistive description of
-the measured numbers: it is not a medical interpretation, not a diagnosis and
-must not be used for treatment decisions. If Ollama is unreachable the caller
+transport counters, device metadata) — never raw EEG samples or personal
+identifiers. By default the request goes to the LOCAL Ollama server on
+127.0.0.1:11434 and nothing leaves the PC. Optionally, setting AI_API_URL
+(+ AI_API_KEY, AI_API_MODEL) uses any OpenAI-compatible API instead — a cloud
+provider or a local server — in which case the same derived numbers are sent
+to that provider. The reply is an assistive description of the measured
+numbers: it is not a medical interpretation, not a diagnosis and must not be
+used for treatment decisions. If the backend is unreachable the caller
 receives an explicit error dict, never invented analysis.
 
 Ollama chat API: https://github.com/ollama/ollama/blob/main/docs/api.md
+OpenAI-compatible chat API: POST {AI_API_URL}/chat/completions
 """
 from __future__ import annotations
 
@@ -18,11 +22,152 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from pathlib import Path
+
+# Optional per-computer AI settings file (gitignored — never committed):
+# KEY=VALUE lines in ai_settings.env next to this file.  Real environment
+# variables always win over values from the file.
+def _load_ai_settings(path):
+    try:
+        text = path.read_text(encoding='utf-8')
+    except OSError:
+        return
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and value:
+            os.environ.setdefault(key, value)
+
+
+_load_ai_settings(Path(__file__).resolve().parent / 'ai_settings.env')
 
 DEFAULT_ENDPOINT = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434')
 DEFAULT_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen3.8:latest')
+# Optional: any OpenAI-compatible API (cloud or local server) instead of the
+# local Ollama model.  When AI_API_URL is set, the AI doctor and the live chat
+# use that endpoint with AI_API_KEY (optional) and AI_API_MODEL.
+# Examples: https://api.openai.com/v1 · https://openrouter.ai/api/v1 ·
+# https://api.anthropic.com/v1 (OpenAI-compat) · http://127.0.0.1:1234/v1 (LM Studio)
+AI_API_URL = os.environ.get('AI_API_URL', '').strip().rstrip('/')
+AI_API_KEY = os.environ.get('AI_API_KEY', '').strip()
+AI_API_MODEL = os.environ.get('AI_API_MODEL', '').strip()
 DEFAULT_TIMEOUT_S = 300.
 DISCLAIMER = 'Assistive description only - not a medical interpretation.'
+
+
+def api_mode():
+    """True when an OpenAI-compatible API endpoint is configured."""
+    return bool(AI_API_URL)
+
+
+def effective_model():
+    """Model name for the active backend (shown in the UI, sent to it)."""
+    return AI_API_MODEL if api_mode() else DEFAULT_MODEL
+
+
+def endpoint_label():
+    """Endpoint label for the active backend (shown in the UI)."""
+    return AI_API_URL if api_mode() else DEFAULT_ENDPOINT
+
+
+def _api_headers():
+    headers = {'Content-Type': 'application/json'}
+    if AI_API_KEY:
+        headers['Authorization'] = 'Bearer ' + AI_API_KEY
+    return headers
+
+
+def _http_detail(exc):
+    """Short, safe snippet of an HTTP error body for the user-facing message."""
+    try:
+        raw = exc.read().decode('utf-8', 'replace').strip()
+    except Exception:
+        return ''
+    return (' — ' + raw[:200]) if raw else ''
+
+
+def _api_ask(messages, timeout, opener):
+    """One non-streaming chat completion on the OpenAI-compatible endpoint."""
+    body = json.dumps({'model': AI_API_MODEL, 'messages': messages,
+                       'stream': False, 'temperature': 0.2},
+                      allow_nan=False).encode('utf-8')
+    request = urllib.request.Request(AI_API_URL + '/chat/completions', data=body,
+                                     headers=_api_headers(), method='POST')
+    try:
+        with opener(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        return {'ok': False, 'model': AI_API_MODEL,
+                'error': f'API HTTP {exc.code}{_http_detail(exc)} — '
+                         'check AI_API_URL / AI_API_KEY / AI_API_MODEL'}
+    except OSError as exc:
+        return {'ok': False, 'model': AI_API_MODEL,
+                'error': f'API unreachable: {exc}'}
+    except (ValueError, UnicodeDecodeError) as exc:
+        return {'ok': False, 'model': AI_API_MODEL,
+                'error': f'Unreadable reply from the API: {exc}'}
+    try:
+        content = str(data['choices'][0]['message'].get('content') or '').strip()
+    except (KeyError, IndexError, TypeError, AttributeError):
+        content = ''
+    if not content:
+        return {'ok': False, 'model': AI_API_MODEL,
+                'error': 'API returned an empty message'}
+    return {'ok': True, 'model': AI_API_MODEL, 'text': content[:4000]}
+
+
+def _api_stream(messages, timeout, opener):
+    """Stream one chat completion from the OpenAI-compatible endpoint."""
+    body = json.dumps({'model': AI_API_MODEL, 'messages': messages,
+                       'stream': True, 'temperature': 0.2},
+                      allow_nan=False).encode('utf-8')
+    request = urllib.request.Request(AI_API_URL + '/chat/completions', data=body,
+                                     headers=_api_headers(), method='POST')
+    try:
+        response = opener(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        yield {'type': 'error',
+               'error': f'API HTTP {exc.code}{_http_detail(exc)} — '
+                        'check AI_API_URL / AI_API_KEY / AI_API_MODEL'}
+        return
+    except OSError as exc:
+        yield {'type': 'error', 'error': f'API unreachable: {exc}'}
+        return
+    got_content = False
+    try:
+        with response:
+            for raw in response:
+                line = (raw.decode('utf-8', 'replace')
+                        if isinstance(raw, (bytes, bytearray)) else str(raw)).strip()
+                if not line or not line.startswith('data:'):
+                    continue
+                payload = line[5:].strip()
+                if payload == '[DONE]':
+                    break
+                try:
+                    event = json.loads(payload)
+                except ValueError:
+                    continue                       # ignore malformed stream lines
+                try:
+                    delta = event['choices'][0].get('delta') or {}
+                    content = delta.get('content')
+                except (KeyError, IndexError, TypeError, AttributeError):
+                    content = None
+                if content:
+                    got_content = True
+                    yield {'type': 'chunk', 'text': str(content)}
+    except (OSError, ValueError) as exc:
+        yield {'type': 'error', 'error': f'API stream failed: {exc}'}
+        return
+    if got_content:
+        yield {'type': 'done'}
+    else:
+        yield {'type': 'error',
+               'error': 'API returned no answer text (check AI_API_MODEL).'}
 
 # Shared hard rules for every local-model prompt (single source; the honesty
 # contract of the app is encoded here and must not be weakened).
@@ -217,8 +362,10 @@ def build_messages(payload):
 
 def ask(payload, model=DEFAULT_MODEL, endpoint=DEFAULT_ENDPOINT,
         timeout=DEFAULT_TIMEOUT_S, opener=None):
-    """Query the local Ollama chat endpoint once. Never raises."""
+    """Query the configured model backend once. Never raises."""
     opener = opener or urllib.request.urlopen
+    if api_mode():
+        return _api_ask(build_messages(payload), timeout, opener)
     body = json.dumps({'model': model, 'messages': build_messages(payload),
                        'stream': False,
                        # Thinking models would otherwise burn the whole token
@@ -251,7 +398,12 @@ def ask(payload, model=DEFAULT_MODEL, endpoint=DEFAULT_ENDPOINT,
 
 
 def available_models(endpoint=DEFAULT_ENDPOINT, timeout=5., opener=None):
-    """Names of locally installed Ollama models; [] when unreachable."""
+    """Names of locally installed Ollama models; [] when unreachable.
+
+    With an API backend configured, reports the one configured model name.
+    """
+    if api_mode():
+        return [AI_API_MODEL] if AI_API_MODEL else []
     opener = opener or urllib.request.urlopen
     request = urllib.request.Request(endpoint.rstrip('/') + '/api/tags', method='GET')
     try:
@@ -311,6 +463,9 @@ def stream_ask(messages, model=DEFAULT_MODEL, endpoint=DEFAULT_ENDPOINT,
     one terminal {'type': 'done'} or {'type': 'error', 'error': str}.
     """
     opener = opener or urllib.request.urlopen
+    if api_mode():
+        yield from _api_stream(messages, timeout, opener)
+        return
     body = json.dumps({'model': model, 'messages': messages, 'stream': True,
                        # A thinking model would burn the latency budget on hidden
                        # reasoning before any visible update arrives.
@@ -363,6 +518,8 @@ def stream_ask(messages, model=DEFAULT_MODEL, endpoint=DEFAULT_ENDPOINT,
 def warm(model=DEFAULT_MODEL, endpoint=DEFAULT_ENDPOINT, timeout=300., opener=None,
          keep_alive='30m'):
     """Best-effort model preload so the first live update is not delayed by the load."""
+    if api_mode():
+        return False                      # nothing to preload for an API backend
     opener = opener or urllib.request.urlopen
     body = json.dumps({'model': model, 'prompt': '', 'stream': False,
                        'keep_alive': keep_alive,

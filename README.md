@@ -36,9 +36,15 @@ headset there. (Only one app may connect to a headset at a time.)
 2. Get this folder onto the PC: `git clone` the repo (public — no login needed) or copy the folder.
 3. Run `setup.cmd` (one time; creates `.venv`, installs the pinned requirements).
 4. Run `Start NeuroSync.cmd`, scan for the headset, connect.
-5. Optional — AI doctor / live chat: install Ollama on that PC with the `qwen3.8:latest` model.
-   If Ollama runs on another computer on your network, point the app at it before
-   launching: `set OLLAMA_URL=http://192.168.1.50:11434` (and optionally `set OLLAMA_MODEL=...`).
+5. Optional — AI doctor / live chat. Pick any of these before launching:
+   - Local model: install Ollama on that PC with the `qwen3.8:latest` model.
+   - Ollama on another computer: `set OLLAMA_URL=http://192.168.1.50:11434`.
+   - ANY API model (OpenAI, OpenRouter, Anthropic, Gemini-compat, LM Studio…):
+     `set AI_API_URL=https://api.openai.com/v1`, `set AI_API_KEY=...`,
+     `set AI_API_MODEL=...`. Or put those lines in `ai_settings.env` next to
+     the app (gitignored) instead of setting them every time.
+   Only derived numbers are ever sent (never raw EEG); with an API backend they
+   go to that provider. The app shows which model is active.
 
 ## Honesty note
 
