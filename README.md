@@ -4,8 +4,9 @@ Live EEG study viewer for BrainBit headsets (BrainBit Classic/Black, BrainBit 2/
 
 ## Run
 
-- Double-click `Start NeuroSync.cmd`, or from this folder:
-  `"C:\Users\GAMEPOWER\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe" -u main.py`
+- First time on a computer: double-click `setup.cmd` (one time — creates the local `.venv` and installs the pinned requirements; needs Python 3.11).
+- Then double-click `Start NeuroSync.cmd`, or from this folder:
+  `.venv\Scripts\python.exe -u main.py` (add `--simulate brainbit` / `--simulate dragon` for the simulator).
 - Press **Scan devices** (one scan covers every supported headset), select one and press **Connect**.
 - DragonEEG first connection: put the headset in pairing mode before scanning; the app will tell you when the SDK reports pairing is required.
 - Before saving a session, set the subject (name + phone). Sessions are written under `recordings/subjects/<subject>/<timestamp>/` (`raw.csv`, `summary.json`, `charts/*.png`) and can be reopened from **History…**; the trend chart compares saved sessions of the selected subject.
@@ -22,9 +23,22 @@ Live EEG study viewer for BrainBit headsets (BrainBit Classic/Black, BrainBit 2/
 ## Test and smoke check
 
 - Full suite (fixture-based, no hardware, no BLE):
-  `"C:\Users\GAMEPOWER\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe" -m unittest discover -p 'test_*.py' -v`
+  `.venv\Scripts\python.exe -m unittest discover -p 'test_*.py' -v`
 - Headless launch check:
-  `QT_QPA_PLATFORM=offscreen "C:\Users\GAMEPOWER\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe" main.py --smoke`
+  `QT_QPA_PLATFORM=offscreen .venv\Scripts\python.exe main.py --smoke`
+
+## Use it on another computer (headset connects there)
+
+Everything is local — "anywhere" means: set the app up once on that PC, pair the
+headset there. (Only one app may connect to a headset at a time.)
+
+1. Install Python 3.11 (https://www.python.org/downloads/ — check "Add python.exe to PATH").
+2. Get this folder onto the PC: `git clone` the repo (private — sign in to GitHub first) or copy the folder.
+3. Run `setup.cmd` (one time; creates `.venv`, installs the pinned requirements).
+4. Run `Start NeuroSync.cmd`, scan for the headset, connect.
+5. Optional — AI doctor / live chat: install Ollama on that PC with the `qwen3.8:latest` model.
+   If Ollama runs on another computer on your network, point the app at it before
+   launching: `set OLLAMA_URL=http://192.168.1.50:11434` (and optionally `set OLLAMA_MODEL=...`).
 
 ## Honesty note
 

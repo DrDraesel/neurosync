@@ -915,7 +915,7 @@ class NeuroSyncApp(QMainWindow):
         ai_row.addWidget(self.ai_button); ai_row.addWidget(self.ai_auto); ai_row.addStretch()
         right.addLayout(ai_row)
         self.ai_status = QLabel('Model: ' + ai_doctor.DEFAULT_MODEL
-                                + ' · local endpoint 127.0.0.1:11434 · offline check on use')
+                                + ' · endpoint ' + ai_doctor.DEFAULT_ENDPOINT + ' · offline check on use')
         self.ai_status.setWordWrap(True); self.ai_status.setStyleSheet('color:#9aadba; font-size:11px;')
         right.addWidget(self.ai_status)
         self.ai_text = QLabel('Ask for an assistive description of the latest measured numbers. Only '
@@ -1966,7 +1966,7 @@ class NeuroSyncApp(QMainWindow):
             error = str(result.get('error') or 'unknown error')
             self._chat_append('sys', 'Local model error: ' + error
                               + '\nNo substitute analysis is shown.')
-            self._set_chat_status('Local model error — is Ollama running at 127.0.0.1:11434?')
+            self._set_chat_status(f'Local model error — is Ollama running at {ai_doctor.DEFAULT_ENDPOINT}?')
         self.update_buttons()
 
     def _chat_request(self, question=None):

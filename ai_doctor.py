@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
 
-DEFAULT_ENDPOINT = 'http://127.0.0.1:11434'
-DEFAULT_MODEL = 'qwen3.8:latest'
+DEFAULT_ENDPOINT = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434')
+DEFAULT_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen3.8:latest')
 DEFAULT_TIMEOUT_S = 300.
 DISCLAIMER = 'Assistive description only - not a medical interpretation.'
 

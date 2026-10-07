@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # Local runtime data — measured sessions and subject folders (privacy)
 recordings/
