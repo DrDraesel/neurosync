@@ -35,6 +35,7 @@ Honesty notes
 * Nothing here is a diagnosis, a clinical electrode map or a mental-state
   classifier. Positions used for the head map are schematic (see topomap.py).
 """
+import math
 from dataclasses import dataclass, field
 
 from neurosdk.cmn_types import (EEGChannelMode, EEGChannelType, EEGChannelId,
@@ -152,6 +153,19 @@ def scalp_channels(channels):
 def poly_channels(channels):
     """Subset of ``channels`` without a scalp position (auxiliary channels)."""
     return tuple(name for name in channels if name not in scalp_channels(channels))
+
+
+def aggregate_min_valid(channels):
+    """Minimum clean channels an aggregate band table needs, by channel count.
+
+    Four-electrode headsets must have every electrode clean: their map is mostly
+    extrapolation already, and a missing electrode would change what is shown.
+    A 21-scalp-electrode Dragon tolerates up to 40% of its sites being excluded
+    (never fewer than 4), so one bad electrode cannot erase the whole band
+    table. This is an aggregation/display policy, not a clinical criterion.
+    """
+    count = len(tuple(channels))
+    return count if count <= 4 else max(4, math.ceil(count * .6))
 
 
 # --------------------------------------------------------------------------- #

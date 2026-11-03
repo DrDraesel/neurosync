@@ -12,6 +12,7 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
 import ai_doctor  # noqa: E402
+import devices  # noqa: E402
 import patient_report  # noqa: E402
 import storage  # noqa: E402
 
@@ -54,27 +55,34 @@ class ReportFixture(unittest.TestCase):
         self.tmp.cleanup()
 
     def seed(self, name='Report Person', phone='555', *, simulated=False,
-             ai_text='', with_charts=True):
+             ai_text='', with_charts=True, device_type='brainbit_classic',
+             device_label=None, channels=('O1', 'O2', 'T3', 'T4'),
+             duration_s=4.8, raw_span_note=None, ai_record=None):
+        channels = tuple(channels)
         summary = {
             'started_at': datetime.now(timezone.utc).isoformat(),
-            'device_type': 'brainbit_classic',
-            'device_label': ('SIMULATED BrainBit Classic' if simulated
-                             else 'BrainBit Classic / Black'),
+            'device_type': device_type,
+            'device_label': device_label or ('SIMULATED BrainBit Classic' if simulated
+                                             else 'BrainBit Classic / Black'),
             'device': {'simulated': True} if simulated else {},
             'simulated': simulated,
-            'channels': ['O1', 'O2', 'T3', 'T4'],
-            'fs_hz': 250, 'raw_rows': 1200, 'duration_s': 4.8, 'notch_hz': 60,
+            'channels': list(channels),
+            'fs_hz': 250, 'raw_rows': 1200, 'duration_s': duration_s,
+            'notch_hz': 60,
             'analysis': fake_report(),
             'stable_estimate': dict(fake_report(), bands=_bands(alpha=48.0),
                                     dominant='Alpha', dominant_pct=48.0,
                                     peak_hz=10.1, epochs_used=6, epochs_total=6),
-            'ai_doctor': {'ok': True, 'text': ai_text} if ai_text else None,
+            'ai_doctor': (ai_record if ai_record is not None
+                          else ({'ok': True, 'text': ai_text} if ai_text else None)),
             'contact': None, 'transport': {'samples': 1200},
             'limits': 'Engineering estimates only.',
         }
+        if raw_span_note is not None:
+            summary['raw_span_note'] = raw_span_note
         header = ['sample_index', 'relative_time_s', 'packet_number',
-                  'raw_O1_uV', 'raw_O2_uV', 'raw_T3_uV', 'raw_T4_uV']
-        rows = [[i, i / 250.0, i] + [0.0] * 4 for i in range(30)]
+                  *[f'raw_{name}_uV' for name in channels]]
+        rows = [[i, i / 250.0, i] + [0.0] * len(channels) for i in range(30)]
         charts = {}
         if with_charts:
             charts['band_power_bars.png'] = b'\x89PNG\r\n\x1a\n' + b'0' * 64
@@ -112,6 +120,47 @@ class TestPatientReport(ReportFixture):
     def test_unknown_subject_raises(self):
         with self.assertRaises(ValueError):
             patient_report.build(self.root, 'Nobody', '000')
+
+    def build_text(self, filename='out.html', **seed_kwargs):
+        self.seed(**seed_kwargs)
+        path = patient_report.build(self.root, 'Report Person', '555',
+                                    out_path=Path(self.tmp.name) / filename)
+        return path.read_text(encoding='utf-8')
+
+    def test_report_says_not_a_medical_device_and_prints_electrode_limit(self):
+        text = self.build_text('disclaimers.html', ai_text='Stored description.')
+        self.assertIn('Not a medical device', text)
+        self.assertIn(patient_report.BRAINBIT_ELECTRODES, text)
+        self.assertIn('4 electrodes, shared reference', text)
+        self.assertIn(ai_doctor.DISCLAIMER, text)
+
+    def test_dragon_session_prints_its_own_electrode_limit(self):
+        text = self.build_text('dragon.html', device_type='dragon_eeg',
+                               device_label='DragonEEG / NeuroEEG',
+                               channels=devices.DRAGON_DOCUMENTED_EEG_CHANNELS)
+        self.assertIn(patient_report.DRAGON_ELECTRODES, text)
+        self.assertIn('21 scalp channels', text)
+        self.assertNotIn(patient_report.BRAINBIT_ELECTRODES, text)
+
+    def test_stored_ai_text_keeps_its_model_and_timestamp(self):
+        record = {'ok': True, 'text': 'Stored model description.',
+                  'model': 'qwen3.8:latest',
+                  'generated_at': '2026-11-03T12:34:56+00:00',
+                  'provenance': 'local model — nothing leaves this PC'}
+        text = self.build_text('ai_provenance.html', ai_record=record)
+        self.assertIn('Stored model description.', text)
+        self.assertIn('model qwen3.8:latest', text)
+        self.assertIn('generated 2026-11-03T12:34:56+00:00', text)
+        self.assertIn('local model — nothing leaves this PC', text)
+
+    def test_ring_buffer_span_is_not_printed_as_the_study_duration(self):
+        text = self.build_text(
+            'span.html', duration_s=60.0,
+            raw_span_note='Raw CSV holds the rolling 60 s analysis buffer, not the whole '
+                          'session length.')
+        self.assertNotIn('duration: 60.0 s', text)
+        self.assertIn('raw buffer span: 60.0 s', text)
+        self.assertIn('not the whole session length', text)
 
 
 class TestLocalInterpretation(unittest.TestCase):

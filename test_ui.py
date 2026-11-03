@@ -5,12 +5,14 @@ import unittest
 import time
 import tempfile
 from pathlib import Path
+from unittest import mock
 import numpy as np
 from PyQt6.QtWidgets import QApplication
 try:
     from main import NeuroSyncApp
 except ImportError:
     NeuroSyncApp=None
+import ai_doctor
 
 class UiTests(unittest.TestCase):
     @classmethod
@@ -57,5 +59,20 @@ class UiTests(unittest.TestCase):
         self.window.analyze_now()
         self.assertFalse(self.window.last_report['valid'])
         self.assertIsNone(self.window.last_report['dominant'])
+    def test_local_mode_labels_say_the_model_is_local(self):
+        with mock.patch.object(ai_doctor,'AI_API_URL',''):
+            self.assertIn('local model — nothing leaves this PC',self.window.chat_note.text())
+            self.assertIn('the local model on this PC',self.window.ai_text.text())
+            self.assertNotIn('API model',self.window.chat_note.text())
+    def test_api_mode_labels_name_the_endpoint_and_drop_local_only_claims(self):
+        with mock.patch.object(ai_doctor,'AI_API_URL','https://api.example.com/v1'):
+            window=NeuroSyncApp(autostart=False)
+            self.addCleanup(window.close)
+            self.assertIn('API model — derived numbers are sent to api.example.com',
+                          window.chat_note.text())
+            self.assertIn('the API at api.example.com',window.ai_text.text())
+            self.assertIn('derived numbers are sent to api.example.com',window.chat_tooltip)
+            self.assertNotIn('never leaves this PC',window.ai_text.text())
+            self.assertNotIn('Nothing is uploaded',window.chat_note.text())
 
 if __name__=='__main__': unittest.main()

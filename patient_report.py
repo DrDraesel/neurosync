@@ -12,10 +12,14 @@ open anywhere or print to PDF:
 * an offline "how to read these numbers" interpretation helper
   (``ai_doctor.local_interpretation``),
 
-Everything is generated locally from files on this PC; nothing is uploaded.
+Everything is generated locally from files on this PC and the file itself is
+never uploaded. If an AI API is configured, only the derived numbers behind the
+stored AI text were sent to it — the provenance line on that section says so.
 
-Honesty: the report describes measured signal-quality numbers.  It is not a
-diagnosis, not a clinical measurement, and carries no mental-state claims.
+Honesty: the report states that it is not a medical device, describes measured
+signal-quality numbers, and prints the electrode limitation of the headset that
+recorded each session. It is not a diagnosis, not a clinical measurement, and
+carries no mental-state claims.
 """
 from __future__ import annotations
 
@@ -31,6 +35,15 @@ import storage
 
 BAND_ORDER = ('Delta', 'Theta', 'Alpha', 'Beta', 'Gamma')
 MAX_CHART_MB = 40.0
+
+# Electrode limitation of each supported headset, printed next to the numbers it
+# produced: a four-electrode BrainBit is not a 19-channel qEEG, and the
+# DragonEEG is a research headset, not a medical device.
+BRAINBIT_ELECTRODES = 'BrainBit: 4 electrodes, shared reference — not a 19-channel qEEG'
+DRAGON_ELECTRODES = 'DragonEEG: 21 scalp channels, not a medical device'
+NOT_A_DEVICE = ('Not a medical device: NeuroSync is a research viewer for measured '
+                'signal-quality numbers. It does not diagnose, treat or monitor any '
+                'condition, and nothing in this document is a clinical result.')
 
 
 def _esc(value) -> str:
@@ -107,6 +120,33 @@ def _charts_html(charts: list, budget: dict) -> str:
     return '<div class="figs">' + ''.join(parts) + '</div>' if parts else ''
 
 
+def _device_electrodes(summary: dict) -> str:
+    """Electrode limitation of the headset that recorded this session."""
+    device = summary.get('device') or {}
+    key = str(summary.get('device_type') or device.get('device_key') or '').lower()
+    channels = summary.get('channels') or []
+    if key.startswith('dragon') or len(channels) > 4:
+        return DRAGON_ELECTRODES
+    return BRAINBIT_ELECTRODES
+
+
+def _ai_html(summary: dict) -> str:
+    """Stored AI text with the model, timestamp and provenance it came with."""
+    record = summary.get('ai_doctor') or {}
+    text = record.get('text') or ''
+    if not text:
+        return ''
+    bits = []
+    if record.get('model'):
+        bits.append(f'model {_esc(record["model"])}')
+    if record.get('generated_at'):
+        bits.append(f'generated {_esc(record["generated_at"])}')
+    if record.get('provenance'):
+        bits.append(_esc(record['provenance']))
+    meta = f"<p class='meta'>{' · '.join(bits)}</p>" if bits else ''
+    return f"<h3>Stored AI doctor description</h3>{meta}<div class='ai'>{_esc(text)}</div>"
+
+
 def _session_section(session: dict, index: int, budget: dict) -> str:
     summary = session.get('summary') or {}
     report = summary.get('analysis') or {}
@@ -116,13 +156,20 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
     title = f"Session {summary.get('started_at') or session.get('path').name}"
     quality = ('state: ' + ('VALID' if report.get('valid') else 'not valid')
                + (f" · {report.get('reason')}" if report.get('reason') else ''))
+    span_note = (summary.get('raw_span_note')
+                 or 'the rolling analysis buffer stored with the session, not the study '
+                    'length')
+    clean_channels = (f"{report.get('channels_valid', '—')}/"
+                      f"{report.get('channels_total', len(summary.get('channels') or []) or '—')}")
     meta_bits = [
         f"device: {_esc(summary.get('device_label'))}",
         f"channels: {_esc(', '.join(summary.get('channels') or []))}",
+        f"electrodes: {_esc(_device_electrodes(summary))}",
         f"sampling: {_esc(summary.get('fs_hz'))} Hz · notch {_esc(summary.get('notch_hz'))} Hz",
-        f"duration: {_fmt(summary.get('duration_s'), 1, ' s')} "
-        f"({_esc(summary.get('raw_rows'))} rows)",
+        f"raw buffer span: {_fmt(summary.get('duration_s'), 1, ' s')} "
+        f"({_esc(summary.get('raw_rows'))} rows) — {_esc(span_note)}",
         f"simulated: {'YES — pipeline demonstration, not measured EEG' if simulated else 'no'}",
+        f"clean channels: {_esc(clean_channels)}",
         quality,
     ]
     predominant = ''
@@ -133,9 +180,7 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
                        + (f", peak {_fmt(estimate.get('peak_hz'), 2, ' Hz')}"
                           if estimate.get('peak_hz') is not None else '')
                        + f" ({'stable estimate' if stable.get('valid') else '5 s window'}).</p>")
-    ai = (summary.get('ai_doctor') or {}).get('text') or ''
-    ai_html = (f"<h3>Stored AI doctor description</h3><div class='ai'>{_esc(ai)}</div>"
-               if ai else '')
+    ai_html = _ai_html(summary)
     baseline = summary.get('vs_baseline') or {}
     baseline_html = ''
     if baseline:
@@ -254,13 +299,19 @@ def build(root, name: str, phone: str = '', out_path=None) -> Path:
  disease conclusion. Show it to a qualified clinician together with a properly recorded
  study (e.g. a qEEG with eyes open/closed, eyes-closed resting EEG) if a real assessment
  is wanted.</div>
+<div class="banner"><b>{_esc(NOT_A_DEVICE)}</b> The electrode limitation of each headset is
+ printed with the session it recorded (a four-electrode BrainBit covers four sites with one
+ shared reference; the DragonEEG reports 21 scalp sites).</div>
 <h2>History — all saved sessions ({len(sessions)})</h2>
 {_history_table(sessions)}
 <h2>How to read these numbers (offline helper)</h2>
 {helper_html}
 {sections}
-<p class="honesty">{_esc(ai_doctor.DISCLAIMER)} Descriptive, engineering-grade spectral summary.
- Recordings and this report never leave this PC. Methods: METHODS.md.</p>
+<p class="honesty">{_esc(ai_doctor.DISCLAIMER)} Not a medical device. Descriptive,
+ engineering-grade spectral summary; the electrode limitation of the recording headset is
+ stated with each session, and so is the provenance (model, timestamp, backend) of any
+ stored AI text. Recordings and this report are written on this PC and are never uploaded.
+ Methods: METHODS.md.</p>
 </body></html>"""
     target = Path(out_path) if out_path else (Path(sessions[0]['path']).parent /
                                               f'patient_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html')

@@ -8,8 +8,10 @@ pipeline — it is never mixed into real recordings. It is an exploratory signal
 viewer: not a medical device, not a diagnosis, not a validated brain map and
 not a mental-state classifier.
 
-Everything stays on this PC. Recordings and analysis summaries are written
-under recordings/subjects/<subject>/<timestamp>/ and nothing is uploaded.
+Recordings and analysis summaries are written under
+recordings/subjects/<subject>/<timestamp>/ and are never uploaded. When an AI API is
+configured (AI_API_URL), only the derived numbers listed in METHODS.md are sent to it;
+ai_doctor.provenance_label() states which backend is in use.
 """
 import sys
 import threading
@@ -31,6 +33,10 @@ from PyQt6.QtGui import QColor, QPixmap, QTextCursor
 from PyQt6 import sip
 import pyqtgraph as pg
 from engine import EEGClient
+try:                      # lab design system (vendored from projects/design-system)
+    from lab_theme import apply_theme as _apply_lab_theme
+except Exception:         # theme is cosmetic — never block the app on it
+    _apply_lab_theme = None
 from eeg_analysis import (CHANNELS, BANDS, COLORS, analyze_window, analyze_stable,
                           band_traces, mean_psd_curve)
 import ai_doctor
@@ -907,7 +913,8 @@ class NeuroSyncApp(QMainWindow):
         self.quality_label.setWordWrap(True)
         self.quality_label.setStyleSheet('color:#f0c47b; padding:8px;')
         right.addWidget(self.quality_label)
-        right.addWidget(QLabel('AI DOCTOR  ·  local model  ·  assistive only'))
+        right.addWidget(QLabel('AI DOCTOR  ·  ' + ai_doctor.backend_label()
+                               + '  ·  assistive only'))
         ai_row = QHBoxLayout()
         self.ai_button = QPushButton('Ask AI doctor')
         self.ai_auto = QCheckBox('auto every 60 s')
@@ -920,17 +927,19 @@ class NeuroSyncApp(QMainWindow):
         right.addWidget(self.ai_status)
         self.ai_text = QLabel('Ask for an assistive description of the latest measured numbers. Only '
                               'derived values (band powers, quality flags, contact, transport '
-                              'counters) reach the local model; raw EEG never leaves this PC. Not a '
-                              'medical device and not a diagnosis.')
+                              f'counters) are sent to {ai_doctor.data_destination()}; raw EEG '
+                              'samples are never sent. Not a medical device and not a diagnosis.')
         self.ai_text.setWordWrap(True)
         self.ai_text.setStyleSheet('background:#182730; padding:10px; font-size:11px;')
         right.addWidget(self.ai_text)
-        right.addWidget(QLabel('LIVE CHAT  ·  local model monitor  ·  updates while recording'))
+        right.addWidget(QLabel('LIVE CHAT  ·  ' + ai_doctor.backend_label()
+                               + ' monitor  ·  updates while recording'))
         chat_row = QHBoxLayout()
         self.chat_toggle = QPushButton('▶ Start live monitor')
-        self.chat_toggle.setToolTip('Post short local-model observations while a recording '
-                                    'runs. Only derived numbers reach the model; nothing '
-                                    'leaves this PC.')
+        self.chat_tooltip = (
+            'Post short observations from the configured AI backend while a recording '
+            'runs. Only derived numbers are sent (' + ai_doctor.provenance_label() + ').')
+        self.chat_toggle.setToolTip(self.chat_tooltip)
         self.chat_every = QComboBox()
         for _seconds in CHAT_INTERVAL_CHOICES:
             self.chat_every.addItem(f'every {_seconds} s', _seconds)
@@ -943,8 +952,9 @@ class NeuroSyncApp(QMainWindow):
         chat_row.addStretch()
         right.addLayout(chat_row)
         self.chat_status = QLabel('Off — start it to get short updates while a recording runs. '
-                                  'The local model describes the measured numbers only; '
-                                  'assistive, not a diagnosis.')
+                                  + ai_doctor.backend_label().capitalize()
+                                  + ' describes the measured numbers only; assistive, not a '
+                                  'diagnosis.')
         self.chat_status.setWordWrap(True)
         self.chat_status.setStyleSheet('color:#9aadba; font-size:11px;')
         right.addWidget(self.chat_status)
@@ -960,11 +970,13 @@ class NeuroSyncApp(QMainWindow):
         chat_send_row.addWidget(self.chat_input)
         chat_send_row.addWidget(self.chat_send)
         right.addLayout(chat_send_row)
-        chat_note = QLabel('Streamed in live from the same local endpoint as the AI doctor. '
-                           'Nothing is uploaded; simulated sessions stay labelled. Not a '
-                           'medical interpretation.')
-        chat_note.setWordWrap(True); chat_note.setStyleSheet('color:#9aadba; font-size:11px;')
-        right.addWidget(chat_note)
+        self.chat_note = QLabel('Streamed in live from the same endpoint as the AI doctor ('
+                                + ai_doctor.provenance_label()
+                                + '). Simulated sessions stay labelled. Not a medical '
+                                  'interpretation.')
+        self.chat_note.setWordWrap(True)
+        self.chat_note.setStyleSheet('color:#9aadba; font-size:11px;')
+        right.addWidget(self.chat_note)
         self.chat_toggle.clicked.connect(self.toggle_chat_monitor)
         self.chat_clear.clicked.connect(self.clear_chat)
         self.chat_send.clicked.connect(self.send_chat_question)
@@ -980,7 +992,8 @@ class NeuroSyncApp(QMainWindow):
         footer = QLabel('Raw EEG is unchanged. Colored components are window-filtered views with edge '
                         'effects. Power uses Welch PSD, not FFT amplitude. Head maps are schematic '
                         'interpolations. Contact checks and interruptions restart the five-second '
-                        'window. All data stays on this PC.')
+                        'window. Recordings stay on this PC; AI provenance: '
+                        + ai_doctor.provenance_label() + '.')
         footer.setWordWrap(True); footer.setStyleSheet('color:#9aadba; padding:6px;')
         layout.addWidget(footer)
 
@@ -1038,6 +1051,28 @@ class NeuroSyncApp(QMainWindow):
     def _reset_buffers(self):
         self.samples = deque(maxlen=BUFFER_SECONDS * self.fs)
         self.packet_numbers = deque(maxlen=BUFFER_SECONDS * self.fs)
+
+    def _analysis_channels(self):
+        """Channels the analysis and the head map use: scalp sites only.
+
+        The DragonEEG auxiliary channels (D1/D2/D3) are poly channels with no
+        scalp position. They stay in the raw trace view, in the contact table
+        and in storage, but they are never analysed as EEG nor placed on the
+        schematic head map (topomap raises on names it cannot position).
+        """
+        return devices.scalp_channels(self.channels) or tuple(self.channels)
+
+    def _analysis_rows(self):
+        """(channel names, microvolt rows) restricted to the analysable columns."""
+        try:
+            rows = np.asarray(self.samples, dtype=float).reshape((-1, len(self.channels)))
+        except ValueError:
+            return None
+        names = self._analysis_channels()
+        if len(names) == len(self.channels):
+            return names, rows
+        indices = [self.channels.index(name) for name in names]
+        return names, rows[:, indices]
 
     def apply_device_info(self, info):
         """Adopt the connected device's channel table and rate (from the SDK)."""
@@ -1648,14 +1683,15 @@ class NeuroSyncApp(QMainWindow):
             'not checked' if contact_age is None
             else f'{contact_age:.0f}s ago' + (' — recheck' if contact_age > 120 else '')))
         continuous = age is not None and age <= .5
-        try:
-            samples = np.asarray(self.samples, dtype=float).reshape((-1, len(self.channels)))
-        except ValueError:
+        view = self._analysis_rows()
+        if view is None:
             return
+        names, samples = view
         report = analyze_window(samples, fs=self.fs, notch_hz=self._notch(),
                                 contact_ohms=self.contact['ohms'] if self.contact else None,
                                 contact_age_s=contact_age, continuous=continuous,
-                                channels=self.channels)
+                                channels=names,
+                                min_valid_channels=devices.aggregate_min_valid(names))
         self.last_report = report
         self.conclusion.setText(report['conclusion'])
         self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#20323e; color:'
@@ -1746,12 +1782,12 @@ class NeuroSyncApp(QMainWindow):
     def _update_psd(self):
         if len(self.samples) < 500:
             return
-        try:
-            samples = np.asarray(self.samples, dtype=float).reshape((-1, len(self.channels)))
-        except ValueError:
+        view = self._analysis_rows()
+        if view is None:
             return
+        names, samples = view
         frequencies, density = mean_psd_curve(samples, fs=self.fs, notch_hz=self._notch(),
-                                              channels=self.channels, fmax=min(100., self.fs / 2))
+                                              channels=names, fmax=min(100., self.fs / 2))
         if frequencies:
             self.psd_curve.setData(frequencies, density)
         else:
@@ -1761,14 +1797,38 @@ class NeuroSyncApp(QMainWindow):
         report = self.last_report
         if not report or not report.get('bands', {}).get(band, {}).get('relative_pct'):
             return None
+        scalp = self._analysis_channels()
         powers = {name: (report['channels'].get(name, {}).get('relative_pct') or {})
-                  for name in self.channels}
-        field = topomap.topomap_band(powers, band, list(self.channels), grid_n=grid_n)
+                  for name in scalp}
+        try:
+            field = topomap.topomap_band(powers, band, list(scalp), grid_n=grid_n)
+        except ValueError:
+            # Only names with a schematic position may reach the interpolator;
+            # anything else means no map rather than a broken display.
+            return None
         return field if np.isfinite(field).any() else None
 
     def update_topomap(self):
+        """Redraw the schematic head map; this method never raises.
+
+        The 1 s analysis timer calls it, and an exception escaping a Qt slot
+        ends the application (and with it an unsaved session), so every map
+        failure is caught here and reported in the status line instead.
+        """
+        try:
+            self._draw_topomap()
+        except Exception as exc:                                  # noqa: BLE001
+            try:
+                self.map_image.clear()
+                self.map_status.setText(
+                    f'Head map unavailable ({type(exc).__name__}: {exc}). '
+                    'Analysis and recording continue.')
+            except Exception:                                     # noqa: BLE001
+                pass                                              # widgets already gone
+
+    def _draw_topomap(self):
         band = self.map_band_select.currentText()
-        scalp = devices.scalp_channels(self.channels)
+        scalp = self._analysis_channels()
         positions = [topomap.ELECTRODE_POSITIONS[name] for name in scalp
                      if name in topomap.ELECTRODE_POSITIONS]
         self.map_electrodes.setData(pos=np.asarray(positions, dtype=float)
@@ -1822,15 +1882,16 @@ class NeuroSyncApp(QMainWindow):
             return
         age = None if self.last_received is None else time.monotonic() - self.last_received
         contact_age = None if self.contact is None else time.monotonic() - self.contact['measured_monotonic']
-        try:
-            samples = np.asarray(self.samples, dtype=float).reshape((-1, len(self.channels)))
-        except ValueError:
+        view = self._analysis_rows()
+        if view is None:
             return
+        names, samples = view
         stable = analyze_stable(samples, fs=self.fs, notch_hz=self._notch(),
                                contact_ohms=self.contact['ohms'] if self.contact else None,
                                contact_age_s=contact_age,
                                continuous=age is not None and age <= .5,
-                               channels=self.channels)
+                               channels=names,
+                               min_valid_channels=devices.aggregate_min_valid(names))
         self.last_stable = stable
         for row, name in enumerate(BANDS):
             band = stable['bands'].get(name, {})
@@ -1881,7 +1942,9 @@ class NeuroSyncApp(QMainWindow):
         self.ai_button.setEnabled(True)
         note = {'ok': bool(result.get('ok')), 'model': result.get('model'),
                 'generated_at': datetime.now(timezone.utc).isoformat(),
-                'text': result.get('text') or '', 'error': result.get('error') or ''}
+                'text': result.get('text') or '', 'error': result.get('error') or '',
+                'provenance': ai_doctor.provenance_label(),
+                'backend': 'api' if ai_doctor.api_mode() else 'local'}
         self.ai_note = note
         if note['ok']:
             self.ai_text.setText(note['text'] + '\n\n' + ai_doctor.DISCLAIMER)
@@ -1915,8 +1978,8 @@ class NeuroSyncApp(QMainWindow):
         self.chat_enabled = not self.chat_enabled
         if self.chat_enabled:
             self.chat_toggle.setText('⏹ Stop live monitor')
-            self._set_chat_status('On — preloading the local model (the first reply can take '
-                                  'a minute on a cold model)…')
+            self._set_chat_status('On — preloading ' + ai_doctor.backend_label()
+                                  + ' (the first reply can take a minute on a cold model)…')
             threading.Thread(target=lambda: ai_doctor.warm(ai_doctor.effective_model()),
                              daemon=True).start()
             self._show_chat()
@@ -1936,7 +1999,8 @@ class NeuroSyncApp(QMainWindow):
         """Add one chat block; returns the cursor used for streamed text appends."""
         if not widget_alive(self.chat_log):
             return None
-        palette = {'user': ('#9fd3ff', 'YOU'), 'assistant': ('#8be6ce', 'LOCAL MODEL'),
+        palette = {'user': ('#9fd3ff', 'YOU'),
+                   'assistant': ('#8be6ce', ai_doctor.backend_name().upper()),
                    'sys': ('#f0c47b', '—')}
         colour, who = palette.get(role, palette['sys'])
         label = who + (f' · {meta}' if meta else '')
@@ -1981,7 +2045,8 @@ class NeuroSyncApp(QMainWindow):
 
     def _chat_request(self, question=None):
         if self.chat_worker is not None and self.chat_worker.isRunning():
-            self._set_chat_status('The local model is busy with the previous reply.')
+            self._set_chat_status(ai_doctor.backend_label().capitalize()
+                                  + ' is busy with the previous reply.')
             return
         if self.last_report is None and self.last_stable is None:
             self._set_chat_status('No analysis yet — wait for at least five seconds of valid EEG.')
@@ -2204,6 +2269,11 @@ def main(argv=None):
                              '(pipeline rehearsal; no headset needed)')
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     app = QApplication([sys.argv[0]])
+    if _apply_lab_theme is not None:
+        try:
+            _apply_lab_theme(app)
+        except Exception as exc:      # never block on cosmetics
+            print(f'theme: {exc}', file=sys.stderr)
     window = NeuroSyncApp(autostart=not args.no_autostart, smoke=args.smoke,
                           simulated=args.simulate)
     window.show()

@@ -47,9 +47,12 @@ class EEGAnalysisTests(unittest.TestCase):
         for color in eeg.COLORS.values():
             self.assertRegex(color, r'^#[0-9a-fA-F]{6}$')
         result = self.analyze()
-        self.assertEqual(set(result), {'ready', 'valid', 'reason', 'samples', 'duration_s',
+        self.assertEqual(set(result), {'ready', 'valid', 'reason', 'channels_valid',
+                                      'channels_total', 'samples', 'duration_s',
                                       'bands', 'channels', 'dominant', 'dominant_pct',
                                       'peak_hz', 'conclusion'})
+        self.assertEqual(result['channels_valid'], 4)
+        self.assertEqual(result['channels_total'], 4)
         self.assertEqual(result['samples'], 1250)
         self.assertEqual(result['duration_s'], 5.)
         self.assertTrue(result['ready'])
@@ -277,10 +280,13 @@ class StableEstimateTests(unittest.TestCase):
 
     def test_contract_and_clean_sine(self):
         result = self.analyze()
-        self.assertEqual(set(result), {'valid', 'reason', 'epochs_total', 'epochs_used',
+        self.assertEqual(set(result), {'valid', 'reason', 'channels_valid', 'channels_total',
+                                       'epochs_total', 'epochs_used',
                                        'epoch_seconds', 'seconds_total', 'seconds_used',
                                        'bands', 'channels', 'dominant', 'dominant_pct',
                                        'peak_hz', 'conclusion'})
+        self.assertEqual(result['channels_valid'], 4)
+        self.assertEqual(result['channels_total'], 4)
         self.assertTrue(result['valid'], result['reason'])
         self.assertEqual(result['epochs_total'], 15)
         self.assertEqual(result['epochs_used'], 15)

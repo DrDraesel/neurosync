@@ -76,6 +76,34 @@ def _channel_set(channels):
     return names
 
 
+def _min_valid_channels(min_valid_channels, count):
+    """Validate min_valid_channels; None means 'every channel must be clean'."""
+    if min_valid_channels is None:
+        return count
+    if (isinstance(min_valid_channels, (bool, np.bool_))
+            or not isinstance(min_valid_channels, (int, np.integer))):
+        raise ValueError('min_valid_channels must be an integer from 1 to the channel count')
+    minimum = int(min_valid_channels)
+    if not 1 <= minimum <= count:
+        raise ValueError('min_valid_channels must be an integer from 1 to the channel count')
+    return minimum
+
+
+def _invalid_reason(result):
+    """'N/M channels valid' plus the per-channel flags that blocked the gate."""
+    detail = '; '.join(
+        f"{name}: {', '.join(channel['flags'])}"
+        for name, channel in result['channels'].items() if channel['flags'])
+    return f"{result['channels_valid']}/{result['channels_total']} channels valid; " + detail
+
+
+def _excluded_label(result):
+    """Readable list of the channels left out of a tolerant aggregate."""
+    return ', '.join(
+        f"{name} ({', '.join(channel['flags'])})"
+        for name, channel in result['channels'].items() if not channel['valid'])
+
+
 def _parameters(fs, notch_hz):
     try:
         fs = float(fs)
@@ -108,6 +136,7 @@ def _samples(samples_uv, channels=CHANNELS):
 def _blank_result(count, fs, ready=False, channels=CHANNELS):
     return {
         'ready': bool(ready), 'valid': False, 'reason': '',
+        'channels_valid': 0, 'channels_total': len(tuple(channels)),
         'samples': int(count), 'duration_s': float(count / fs),
         'bands': {name: {'low_hz': low, 'high_hz': high,
                          'power_uv2': None, 'relative_pct': None}
@@ -217,7 +246,8 @@ def _peak_hz(frequencies, density):
 
 
 def analyze_window(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
-                   contact_age_s=None, continuous=True, channels=CHANNELS):
+                   contact_age_s=None, continuous=True, channels=CHANNELS,
+                   min_valid_channels=None):
     """Analyze exactly the latest five seconds of real Nx4 microvolt samples.
 
     ``channels`` selects the device's channel table (default: the four verified
@@ -239,6 +269,15 @@ def analyze_window(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
     inspection; only channels with no flags get a dominant label. Uncomputable
     per-channel powers/percentages are empty mappings (never NaN). Invalid
     aggregate band values, dominant, dominant_pct, and peak_hz are all None.
+
+    ``min_valid_channels`` sets how many clean channels the aggregate needs.
+    None (the default) keeps the original contract: every analysed channel must
+    be clean. A smaller number lets a many-electrode device keep a band table
+    when one electrode is bad; the aggregate is then the mean over the clean
+    channels only and ``reason`` says 'N/M channels valid' with the excluded
+    names and flags. ``channels_valid`` / ``channels_total`` are reported in
+    every result, so 'N/M channels valid' is always available to the UI and to
+    the report.
     Each channel that has usable band numbers also carries its own ``peak_hz``:
     the largest value of that channel's mean density between 1 and 45 Hz (same
     definition as the aggregate peak), None when no band power was computable.
@@ -250,6 +289,7 @@ def analyze_window(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
     """
     fs, needed, notch_hz = _parameters(fs, notch_hz)
     names = _channel_set(channels)
+    minimum = _min_valid_channels(min_valid_channels, len(names))
     samples = _samples(samples_uv, names)
     if samples is None:
         return _reject(_blank_result(0, fs, channels=names), 'invalid_sample_shape')
@@ -302,14 +342,16 @@ def analyze_window(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
         # same 1..45 Hz definition as the aggregate peak; None when the channel
         # has no usable band numbers at all.
         channel['peak_hz'] = _peak_hz(frequencies, density) if relative else None
-        densities.append(density)
-    if not all(channel['valid'] for channel in result['channels'].values()):
-        result['reason'] = '; '.join(
-            f"{name}: {', '.join(channel['flags'])}"
-            for name, channel in result['channels'].items() if channel['flags'])
+        if channel['valid']:
+            densities.append(density)
+    result['channels_valid'] = sum(1 for channel in result['channels'].values()
+                                   if channel['valid'])
+    valid_channels = [channel for channel in result['channels'].values() if channel['valid']]
+    if len(valid_channels) < minimum:
+        result['reason'] = _invalid_reason(result)
         return result
     powers = {band: float(np.mean([channel['powers_uv2'][band]
-                                  for channel in result['channels'].values()]))
+                                  for channel in valid_channels]))
               for band in BANDS}
     relative = _relative(powers)
     dominant, pct = _dominant(relative)
@@ -324,8 +366,13 @@ def analyze_window(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
     else:
         conclusion = (f'Largest measured band in latest 5s: {dominant} '
                       f'({pct:.1f}% of 1-45 Hz power); descriptive only.')
-    result.update(valid=True, reason='ok', dominant=dominant,
-                  dominant_pct=pct, peak_hz=peak, conclusion=conclusion)
+    excluded = _excluded_label(result)
+    result.update(valid=True,
+                  reason='ok' if not excluded else
+                         f"{result['channels_valid']}/{result['channels_total']} channels valid; "
+                         f"excluded {excluded}",
+                  dominant=dominant, dominant_pct=pct, peak_hz=peak,
+                  conclusion=conclusion)
     return result
 
 
@@ -371,6 +418,7 @@ def _epoch_density(raw, fs, per):
 def _blank_stable(epochs_total, per, fs, epoch_seconds, channels=CHANNELS):
     return {
         'valid': False, 'reason': '',
+        'channels_valid': 0, 'channels_total': len(tuple(channels)),
         'epochs_total': int(epochs_total), 'epochs_used': 0,
         'epoch_seconds': float(epoch_seconds),
         'seconds_total': float(epochs_total * per / fs), 'seconds_used': 0.,
@@ -388,7 +436,7 @@ def _blank_stable(epochs_total, per, fs, epoch_seconds, channels=CHANNELS):
 
 def analyze_stable(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
                    contact_age_s=None, continuous=True, epoch_seconds=2.,
-                   min_epochs=6, channels=CHANNELS):
+                   min_epochs=6, channels=CHANNELS, min_valid_channels=None):
     """Robust multi-epoch estimate over a longer real-microvolt buffer.
 
     Splits the newest whole epochs of ``epoch_seconds`` and, per channel,
@@ -398,19 +446,24 @@ def analyze_stable(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
     boundary rejects the entering epoch instead of escaping detection. Powers
     are means over clean epochs; ``sem_uv2`` is the standard error of those
     clean epochs (0 when only one epoch is clean). Aggregate = mean of channel
-    means and requires every analysed channel valid, matching the five-second
-    analysis; aggregate SEM combines channel SEMs as sqrt(sum(sem^2))/4 and
-    ``epochs_used`` is the minimum across channels. ``excluded`` counts the
-    reject reasons per channel. Input is never mutated; all outputs are
-    JSON-safe; malformed input returns a suppressed result; invalid
-    configuration raises ValueError. Descriptive research estimate: not a
-    clinical result, and epoch rejection is a heuristic.
+    means; by default every analysed channel must be valid, matching the
+    five-second analysis. ``min_valid_channels`` lowers that requirement (see
+    below); aggregate SEM combines channel SEMs as sqrt(sum(sem^2))/N over the
+    channels in the aggregate and ``epochs_used`` is the minimum across those
+    channels. ``excluded`` counts the reject reasons per channel. Input is never
+    mutated; all outputs are JSON-safe; malformed input returns a suppressed
+    result; invalid configuration raises ValueError. Descriptive research
+    estimate: not a clinical result, and epoch rejection is a heuristic.
 
     ``channels`` selects the device's channel table (default: the four verified
     BrainBit Classic channels). With a 21+ channel device the aggregate covers
     the whole reported electrode set and therefore needs every one of those
-    channels to be clean; treat a missing aggregate there as the conservative
-    gate it is, not as device failure. Each channel with usable band numbers
+    channels to be clean by default; that is the conservative gate, not device
+    failure. ``min_valid_channels`` (default None = all channels) sets the
+    minimum number of clean channels for an aggregate, so a many-electrode
+    device keeps its band table when a single electrode is bad; the result then
+    reports 'N/M channels valid' in ``reason``, and ``channels_valid`` /
+    ``channels_total`` count it. Each channel with usable band numbers
     also carries its own ``peak_hz`` (largest value of that channel's mean
     density across its clean epochs, 1..45 Hz), useful for the per-subject
     baseline table in ``baseline.py``; it is None when nothing was computable.
@@ -418,6 +471,7 @@ def analyze_stable(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
     fs, _, notch_hz = _parameters(fs, notch_hz)
     epoch_seconds, per, min_epochs = _epoch_parameters(fs, epoch_seconds, min_epochs)
     names = _channel_set(channels)
+    minimum = _min_valid_channels(min_valid_channels, len(names))
     samples = _samples(samples_uv, names)
     if samples is None:
         return _reject(_blank_stable(0, per, fs, epoch_seconds, names), 'invalid_sample_shape')
@@ -457,7 +511,6 @@ def analyze_stable(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
                     excluded[reason] = excluded.get(reason, 0) + 1
                 continue
             frequencies, density = _epoch_density(_notched(raw, fs, notch_hz), fs, per)
-            densities.append(density)
             channel_densities.append(density)
             powers_by_epoch.append({band: _integral(frequencies, density, low, high)
                                     for band, (low, high) in BANDS.items()})
@@ -483,13 +536,14 @@ def analyze_stable(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
         if channel_densities and channel['relative_pct']:
             channel['peak_hz'] = _peak_hz(frequencies,
                                           np.mean(np.vstack(channel_densities), axis=0))
-    channels = result['channels'].values()
-    if not all(channel['valid'] for channel in channels):
-        result['reason'] = '; '.join(
-            f"{name}: {', '.join(channel['flags'])}"
-            for name, channel in result['channels'].items() if channel['flags'])
+        if channel['valid']:
+            densities.extend(channel_densities)
+    result['channels_valid'] = sum(1 for channel in result['channels'].values()
+                                   if channel['valid'])
+    channel_list = [channel for channel in result['channels'].values() if channel['valid']]
+    if len(channel_list) < minimum:
+        result['reason'] = _invalid_reason(result)
         return result
-    channel_list = list(result['channels'].values())
     used = min(channel['epochs_used'] for channel in channel_list)
     powers, sem = {}, {}
     for band in BANDS:
@@ -515,7 +569,12 @@ def analyze_stable(samples_uv, fs=250, notch_hz=60, contact_ohms=None,
         conclusion = (f'Stable estimate over {used} clean {epoch_label} '
                       f'({used * epoch_seconds:g} s): largest band {dominant} '
                       f'({pct:.1f}% of 1-45 Hz power); descriptive only.')
-    result.update(valid=True, reason='ok', dominant=dominant, dominant_pct=pct,
+    excluded = _excluded_label(result)
+    result.update(valid=True,
+                  reason='ok' if not excluded else
+                         f"{result['channels_valid']}/{result['channels_total']} channels valid; "
+                         f"excluded {excluded}",
+                  dominant=dominant, dominant_pct=pct,
                   peak_hz=peak, epochs_used=used,
                   seconds_used=used * epoch_seconds, conclusion=conclusion)
     return result

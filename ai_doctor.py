@@ -23,6 +23,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # Optional per-computer AI settings file (gitignored — never committed):
 # KEY=VALUE lines in ai_settings.env next to this file.  Real environment
@@ -72,6 +73,44 @@ def effective_model():
 def endpoint_label():
     """Endpoint label for the active backend (shown in the UI)."""
     return AI_API_URL if api_mode() else DEFAULT_ENDPOINT
+
+
+def api_host():
+    """Host[:port] of the configured API endpoint; None in local mode."""
+    if not api_mode():
+        return None
+    return urlsplit(AI_API_URL).netloc or AI_API_URL
+
+
+def backend_name():
+    """Backend name without its endpoint: 'local model' / 'API model'."""
+    return 'API model' if api_mode() else 'local model'
+
+
+def backend_label():
+    """Short label of the active backend: 'local model' / 'API model (host)'."""
+    host = api_host()
+    return f'{backend_name()} ({host})' if host else backend_name()
+
+
+def data_destination():
+    """Where the derived numbers go, as a phrase for UI and report sentences."""
+    host = api_host()
+    return f'the API at {host}' if host else 'the local model on this PC'
+
+
+def provenance_label():
+    """One-line provenance of the active AI backend, for UI labels and reports.
+
+    Single source of truth for the app's 'local model' / 'nothing is uploaded'
+    wording: in API mode the same derived numbers are sent to the configured
+    endpoint, so those sentences must say so instead of claiming everything
+    stays on the PC.
+    """
+    host = api_host()
+    if host:
+        return f'API model — derived numbers are sent to {host}'
+    return 'local model — nothing leaves this PC'
 
 
 def _api_headers():
@@ -193,7 +232,8 @@ SYSTEM_PROMPT = (
     'You are an EEG analysis assistant inside a local research viewer for BrainBit '
     'headsets (4 channels O1 O2 T3 T4, one shared reference — Classic/Black/2/Pro/Flex) '
     'and the DragonEEG / NeuroEEG headset (up to 21 scalp electrodes plus auxiliary '
-    'channels). Nominal sampling 250 Hz. You are not a physician and this is not '
+    'channels). BrainBit headsets sample at 250 Hz; the DragonEEG runs at the rate '
+    'the payload reports (250, 500 or 1000 Hz). You are not a physician and this is not '
     'medical care.\n'
     + HARD_RULES +
     'Write plain text, no markdown headings, under 200 words, in this order:\n'
@@ -218,7 +258,8 @@ LIVE_SYSTEM_PROMPT = (
     'You are the live monitor inside a local EEG research viewer for BrainBit '
     'headsets (4 channels O1 O2 T3 T4, one shared reference — Classic/Black/2/Pro/Flex) '
     'and the DragonEEG / NeuroEEG headset (up to 21 scalp electrodes plus auxiliary '
-    'channels). Nominal sampling 250 Hz. You watch ONE ongoing recording and receive '
+    'channels). BrainBit headsets sample at 250 Hz; the DragonEEG runs at the rate '
+    'the payload reports (250, 500 or 1000 Hz). You watch ONE ongoing recording and receive '
     'a series of short updates, each carrying the current derived numbers. You are '
     'not a physician and this is not medical care.\n'
     + HARD_RULES +
@@ -559,9 +600,9 @@ BAND_CONTEXT = {
     'Beta': ('13–30 Hz. Low-amplitude fast activity, often relatively larger over frontal '
              'sites. Muscle activity (jaw, neck, forehead) is a common contaminant in the '
              'beta range; in short recordings beta changes often track EMG rather than EEG.'),
-    'Gamma': ('30–45 Hz. At scalp electrodes with a 250 Hz sampling rate this band is '
-              'dominated by muscle (EMG) and line-noise leakage far more than by cortical '
-              'rhythms; treat any share here as quality-dependent.'),
+    'Gamma': ('30–45 Hz. At scalp electrodes this band is dominated by muscle (EMG) and '
+              'line-noise leakage far more than by cortical rhythms, especially at a 250 Hz '
+              'sampling rate; treat any share here as quality-dependent.'),
 }
 SYMMETRIC_PAIRS = (('Fp1', 'Fp2'), ('F1', 'F2'), ('F3', 'F4'), ('F7', 'F8'), ('C1', 'C2'),
                    ('C3', 'C4'), ('T3', 'T4'), ('T7', 'T8'), ('T5', 'T6'), ('P3', 'P4'),

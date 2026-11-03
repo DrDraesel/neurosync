@@ -10,7 +10,8 @@ EACH device.  This window is a second, independent live pipeline:
   clearly-labelled simulator (``simulated`` argument),
 * its own 60 s rolling buffer, 5 s window analysis, contact check and topomap,
 * save to the same per-subject permanent storage as the main window,
-* head-map PNG export and a local AI-doctor request for this device's numbers.
+* head-map PNG export and an AI-doctor request for this device's numbers
+  (local model or configured API — see ai_doctor.provenance_label()).
 
 Honesty rules are identical to the main window: engineering-grade descriptive
 numbers only — no diagnosis, no mental-state claims; simulated data is
@@ -276,15 +277,17 @@ class SecondDeviceWindow(QDialog):
         self.contact_label = QLabel('ELECTRODE CONTACT · not checked')
         self.contact_label.setWordWrap(True)
         right_layout.addWidget(self.contact_label)
-        right_layout.addWidget(QLabel('AI DOCTOR · this device’s numbers · local model'))
+        right_layout.addWidget(QLabel('AI DOCTOR · this device’s numbers · '
+                                      + ai_doctor.backend_label()))
         ai_row = QHBoxLayout()
         self.ai_button = QPushButton('Ask AI doctor')
         self.ai_auto = QCheckBox('auto every 60 s')
         ai_row.addWidget(self.ai_button); ai_row.addWidget(self.ai_auto); ai_row.addStretch()
         right_layout.addLayout(ai_row)
         self.ai_text = QLabel('Ask for an assistive description of THIS device’s latest measured '
-                              'numbers. Same rules as the main window: derived values only, local '
-                              'model, assistive description — not a diagnosis.')
+                              'numbers. Same rules as the main window: derived values only, '
+                              + ai_doctor.backend_label()
+                              + ', assistive description — not a diagnosis.')
         self.ai_text.setWordWrap(True)
         self.ai_text.setStyleSheet('background:#182730; padding:9px; font-size:11px;')
         right_layout.addWidget(self.ai_text)
@@ -293,8 +296,9 @@ class SecondDeviceWindow(QDialog):
         split.setSizes([700, 420])
 
         footer = QLabel('Same honesty rules as the main window: descriptive engineering numbers, '
-                        'schematic maps, no diagnosis, nothing uploaded. Raw EEG never leaves '
-                        'this PC.')
+                        'schematic maps, no diagnosis. Provenance: '
+                        + ai_doctor.provenance_label()
+                        + '. Raw EEG samples are never sent.')
         footer.setWordWrap(True)
         footer.setStyleSheet('color:#9aadba; padding:4px;')
         layout.addWidget(footer)
@@ -448,6 +452,22 @@ class SecondDeviceWindow(QDialog):
         self.map_status.setText('Waiting for a valid five-second window (second device).')
         self.update_buttons()
 
+    def _analysis_channels(self):
+        """Channels analysed and mapped: scalp sites only (never aux D1/D2/D3)."""
+        return devices.scalp_channels(self.channels) or tuple(self.channels)
+
+    def _analysis_rows(self):
+        """(channel names, microvolt rows) restricted to the analysable columns."""
+        try:
+            rows = np.asarray(self.samples, dtype=float).reshape((-1, len(self.channels)))
+        except ValueError:
+            return None
+        names = self._analysis_channels()
+        if len(names) == len(self.channels):
+            return names, rows
+        indices = [self.channels.index(name) for name in names]
+        return names, rows[:, indices]
+
     # ----------------------------------------------------------------- analysis
     def analyze_now(self):
         if len(self.samples) < self.fs * 5:
@@ -455,16 +475,17 @@ class SecondDeviceWindow(QDialog):
             return
         age = None if self.last_received is None else time.monotonic() - self.last_received
         contact_age = None if self.contact is None else time.monotonic() - self.contact['measured_monotonic']
-        try:
-            samples = np.asarray(self.samples, dtype=float).reshape((-1, len(self.channels)))
-        except ValueError:
+        view = self._analysis_rows()
+        if view is None:
             return
+        names, samples = view
         notch = 60
         report = analyze_window(samples, fs=self.fs, notch_hz=notch,
                                 contact_ohms=self.contact['ohms'] if self.contact else None,
                                 contact_age_s=contact_age,
                                 continuous=age is not None and age <= .5,
-                                channels=self.channels)
+                                channels=names,
+                                min_valid_channels=devices.aggregate_min_valid(names))
         self.last_report = report
         self.conclusion.setText(report['conclusion'])
         self.quality_label.setText(report['reason'])
@@ -510,14 +531,31 @@ class SecondDeviceWindow(QDialog):
         report = self.last_report
         if not report or not report.get('bands', {}).get(band, {}).get('relative_pct'):
             return None
+        scalp = self._analysis_channels()
         powers = {name: (report['channels'].get(name, {}).get('relative_pct') or {})
-                  for name in self.channels}
-        field = topomap.topomap_band(powers, band, list(self.channels), grid_n=grid_n)
+                  for name in scalp}
+        try:
+            field = topomap.topomap_band(powers, band, list(scalp), grid_n=grid_n)
+        except ValueError:
+            return None
         return field if np.isfinite(field).any() else None
 
     def update_topomap(self):
+        """Redraw this window's head map; never raises into the 1 s timer."""
+        try:
+            self._draw_topomap()
+        except Exception as exc:                                  # noqa: BLE001
+            try:
+                self.map_image.clear()
+                self.map_status.setText(
+                    f'Head map unavailable ({type(exc).__name__}: {exc}). '
+                    'Analysis and recording continue.')
+            except Exception:                                     # noqa: BLE001
+                pass                                              # widgets already gone
+
+    def _draw_topomap(self):
         band = self.map_band_select.currentText()
-        scalp = devices.scalp_channels(self.channels)
+        scalp = self._analysis_channels()
         positions = [topomap.ELECTRODE_POSITIONS[name] for name in scalp
                      if name in topomap.ELECTRODE_POSITIONS]
         self.map_electrodes.setData(pos=np.asarray(positions, dtype=float)
@@ -577,17 +615,20 @@ class SecondDeviceWindow(QDialog):
                                           device=self.device_metadata,
                                           contact=self.contact['ohms'] if self.contact else None)
         self.ai_button.setEnabled(False)
-        self.ai_worker = AIWorker(payload, ai_doctor.DEFAULT_MODEL, self)
+        self.ai_worker = AIWorker(payload, ai_doctor.effective_model(), self)
         self.ai_worker.note_ready.connect(self.handle_ai_note)
         self.ai_worker.start()
 
     def handle_ai_note(self, result):
         self.ai_button.setEnabled(True)
-        self.ai_note = result
-        if result.get('ok'):
-            self.ai_text.setText(result.get('text', '') + '\n\n' + ai_doctor.DISCLAIMER)
+        self.ai_note = {'ok': bool(result.get('ok')), 'model': result.get('model'),
+                        'generated_at': datetime.now(timezone.utc).isoformat(),
+                        'text': result.get('text') or '', 'error': result.get('error') or '',
+                        'provenance': ai_doctor.provenance_label()}
+        if self.ai_note['ok']:
+            self.ai_text.setText(self.ai_note['text'] + '\n\n' + ai_doctor.DISCLAIMER)
         else:
-            self.ai_text.setText('AI doctor unavailable: ' + str(result.get('error'))
+            self.ai_text.setText('AI doctor unavailable: ' + self.ai_note['error']
                                  + '\n\nNo substitute analysis is shown.')
         self.update_buttons()
 
@@ -648,6 +689,8 @@ class SecondDeviceWindow(QDialog):
             'fs_hz': self.fs,
             'raw_rows': int(rows.shape[0]),
             'duration_s': round(rows.shape[0] / self.fs, 3),
+            'raw_span_note': f'Raw CSV holds the rolling {BUFFER_SECONDS} s analysis buffer, not the '
+                             'whole session length.',
             'notch_hz': 60,
             'analysis': self.last_report,
             'stable_estimate': None,
