@@ -17,3 +17,6 @@ runtime_status.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# graphify knowledge graph artifacts
+graphify-out/
