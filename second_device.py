@@ -57,12 +57,12 @@ def grab_png(widget) -> bytes:
 def render_topomap_png(field, band, channels, footer) -> bytes:
     """Off-screen presentation render of one band's head map (PNG bytes)."""
     plot = pg.PlotWidget()
-    plot.setBackground('#0e1c26')
+    plot.setBackground('#FFFFFF')
     plot.setAspectLocked(True)
     plot.setRange(xRange=(-1.32, 1.32), yRange=(-1.32, 1.32), padding=0)
     plot.getPlotItem().setTitle(
         f'NeuroSync · {band} relative power (%) · schematic head map — second device',
-        size='14pt', color='#e3edf4')
+        size='14pt', color='#1A1A1A')
     try:
         cmap = pg.colormap.get('turbo')
     except Exception:
@@ -74,23 +74,23 @@ def render_topomap_png(field, band, channels, footer) -> bytes:
     from PyQt6.QtCore import QRectF
     image.setRect(QRectF(-1, -1, 2, 2))
     outline_x, outline_y = topomap.head_outline(181)
-    plot.plot(outline_x, outline_y, pen=pg.mkPen('#6f8ea0', width=1.6))
-    plot.plot([-.22, 0, .22], [.97, 1.14, .97], pen=pg.mkPen('#6f8ea0', width=1.6))
-    plot.plot([-1, -1.12, -1.12, -1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6f8ea0', width=1.6))
-    plot.plot([1, 1.12, 1.12, 1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6f8ea0', width=1.6))
+    plot.plot(outline_x, outline_y, pen=pg.mkPen('#6E6961', width=1.6))
+    plot.plot([-.22, 0, .22], [.97, 1.14, .97], pen=pg.mkPen('#6E6961', width=1.6))
+    plot.plot([-1, -1.12, -1.12, -1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6E6961', width=1.6))
+    plot.plot([1, 1.12, 1.12, 1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6E6961', width=1.6))
     positions = [topomap.ELECTRODE_POSITIONS[name] for name in channels
                  if name in topomap.ELECTRODE_POSITIONS]
     if positions:
-        spots = pg.ScatterPlotItem(size=9, brush=pg.mkBrush('#e3edf4'), pen=pg.mkPen('#20323e'))
+        spots = pg.ScatterPlotItem(size=9, brush=pg.mkBrush('#1A1A1A'), pen=pg.mkPen('#F1EBE2'))
         spots.setData(pos=np.asarray(positions, dtype=float))
         plot.addItem(spots)
         for name in channels:
             if name in topomap.ELECTRODE_POSITIONS:
                 x, y = topomap.ELECTRODE_POSITIONS[name]
-                label = pg.TextItem(name, color='#cde6f2', anchor=(0.5, 0.5))
+                label = pg.TextItem(name, color='#1A1A1A', anchor=(0.5, 0.5))
                 label.setPos(x * 1.16, y * 1.16)
                 plot.addItem(label)
-    footer_item = pg.TextItem(footer, color='#9aadba', anchor=(0, 1))
+    footer_item = pg.TextItem(footer, color='#6E6961', anchor=(0, 1))
     footer_item.setPos(-1.30, -1.30)
     plot.addItem(footer_item)
     plot.resize(1200, 1100)
@@ -169,7 +169,7 @@ class SecondDeviceWindow(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         heading = QLabel('SECOND DEVICE · independent stream · own heat map')
-        heading.setStyleSheet('font-size:16px; font-weight:700; color:#8be6ce; padding:4px;')
+        heading.setStyleSheet('font-size:16px; font-weight:700; color:#E8541F; padding:4px;')
         layout.addWidget(heading)
 
         bar = QHBoxLayout()
@@ -189,7 +189,7 @@ class SecondDeviceWindow(QDialog):
         subject_row = QHBoxLayout()
         self.subject_button = QPushButton('Set subject…')
         self.subject_label = QLabel('Subject: not set (required before saving)')
-        self.subject_label.setStyleSheet('color:#f0c47b;')
+        self.subject_label.setStyleSheet('color:#9A5B00;')
         subject_row.addWidget(self.subject_button); subject_row.addWidget(self.subject_label)
         subject_row.addStretch()
         subject_row.addWidget(QLabel('Head map band'))
@@ -201,11 +201,11 @@ class SecondDeviceWindow(QDialog):
                                    'one: scan/connect a DIFFERENT headset here to run both '
                                    'at the same time.')
         self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet('background:#182730; padding:7px; color:#b9cad7;')
+        self.status_label.setStyleSheet('background:#FBF7F1; padding:7px; color:#6E6961;')
         layout.addWidget(self.status_label)
         self.sim_note = QLabel(SIM_NOTE)
         self.sim_note.setWordWrap(True)
-        self.sim_note.setStyleSheet('color:#f0c47b; font-size:11px; padding:4px;')
+        self.sim_note.setStyleSheet('color:#9A5B00; font-size:11px; padding:4px;')
         self.sim_note.setVisible(bool(self.simulated))
         layout.addWidget(self.sim_note)
 
@@ -220,7 +220,7 @@ class SecondDeviceWindow(QDialog):
         names = list(BANDS)
         self.bars_plot.getAxis('bottom').setTicks([[(i, n) for i, n in enumerate(names)]])
         self.bars_absolute = pg.BarGraphItem(x=[], height=[], width=.6)
-        self.bars_relative = pg.BarGraphItem(x=[], height=[], width=.6, brush='#3f6379')
+        self.bars_relative = pg.BarGraphItem(x=[], height=[], width=.6, brush='#D9D1C5')
         self.bars_plot.addItem(self.bars_relative)
         self.bars_plot.addItem(self.bars_absolute)
         left_layout.addWidget(self.bars_plot)
@@ -238,15 +238,15 @@ class SecondDeviceWindow(QDialog):
         self.map_image.setLookupTable(self.map_cmap.getLookupTable(nPts=256))
         self.map_plot.addItem(self.map_image)
         outline_x, outline_y = topomap.head_outline(181)
-        self.map_plot.plot(outline_x, outline_y, pen=pg.mkPen('#6f8ea0', width=1.4))
-        self.map_electrodes = pg.ScatterPlotItem(size=7, brush=pg.mkBrush('#e3edf4'),
-                                                 pen=pg.mkPen('#20323e'))
+        self.map_plot.plot(outline_x, outline_y, pen=pg.mkPen('#6E6961', width=1.4))
+        self.map_electrodes = pg.ScatterPlotItem(size=7, brush=pg.mkBrush('#1A1A1A'),
+                                                 pen=pg.mkPen('#F1EBE2'))
         self.map_plot.addItem(self.map_electrodes)
         left_layout.addWidget(self.map_plot)
         map_row = QHBoxLayout()
         self.map_status = QLabel('Waiting for a valid five-second window.')
         self.map_status.setWordWrap(True)
-        self.map_status.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.map_status.setStyleSheet('color:#6E6961; font-size:11px;')
         self.map_export_button = QPushButton('Export head map PNG…')
         map_row.addWidget(self.map_status, 1); map_row.addWidget(self.map_export_button)
         left_layout.addLayout(map_row)
@@ -258,15 +258,15 @@ class SecondDeviceWindow(QDialog):
         right_layout.addWidget(QLabel('LATEST 5 SECONDS · this device'))
         self.predominant = QLabel('PREDOMINANT RHYTHM · —')
         self.predominant.setWordWrap(True)
-        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#17262f;')
+        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#FBF7F1;')
         right_layout.addWidget(self.predominant)
         self.conclusion = QLabel('Waiting for five seconds of continuous EEG.')
         self.conclusion.setWordWrap(True)
-        self.conclusion.setStyleSheet('font-size:13px; padding:9px; background:#20323e;')
+        self.conclusion.setStyleSheet('font-size:13px; padding:9px; background:#F1EBE2;')
         right_layout.addWidget(self.conclusion)
         self.quality_label = QLabel('Signal quality unverified.')
         self.quality_label.setWordWrap(True)
-        self.quality_label.setStyleSheet('color:#f0c47b;')
+        self.quality_label.setStyleSheet('color:#9A5B00;')
         right_layout.addWidget(self.quality_label)
         self.channel_table = QTableWidget(0, 4)
         self.channel_table.setHorizontalHeaderLabels(['Channel', 'Power µV²', 'Relative %', 'Dominant'])
@@ -289,7 +289,7 @@ class SecondDeviceWindow(QDialog):
                               + ai_doctor.backend_label()
                               + ', assistive description — not a diagnosis.')
         self.ai_text.setWordWrap(True)
-        self.ai_text.setStyleSheet('background:#182730; padding:9px; font-size:11px;')
+        self.ai_text.setStyleSheet('background:#FBF7F1; padding:9px; font-size:11px;')
         right_layout.addWidget(self.ai_text)
         right_layout.addStretch()
         split.addWidget(right)
@@ -300,7 +300,7 @@ class SecondDeviceWindow(QDialog):
                         + ai_doctor.provenance_label()
                         + '. Raw EEG samples are never sent.')
         footer.setWordWrap(True)
-        footer.setStyleSheet('color:#9aadba; padding:4px;')
+        footer.setStyleSheet('color:#6E6961; padding:4px;')
         layout.addWidget(footer)
 
         # signals

@@ -173,7 +173,7 @@ class SubjectDialog(QDialog):
                       'The phone number is used only to keep two subjects with the same '
                       'name apart and is written to the local session files as typed.')
         note.setWordWrap(True)
-        note.setStyleSheet('color:#9aadba; font-size:11px;')
+        note.setStyleSheet('color:#6E6961; font-size:11px;')
         form.addRow(note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                    | QDialogButtonBox.StandardButton.Cancel)
@@ -201,7 +201,7 @@ class BaselineDialog(QDialog):
         if source_text:
             source = QLabel(source_text)
             source.setWordWrap(True)
-            source.setStyleSheet('color:#9aadba; font-size:11px;')
+            source.setStyleSheet('color:#6E6961; font-size:11px;')
             form.addRow(source)
         note = QLabel('The condition is stored with the baseline and shown with every delta: '
                       'eyes-closed and eyes-open records differ, so only measurements taken in the '
@@ -209,7 +209,7 @@ class BaselineDialog(QDialog):
                       'reference of this subject\'s own numbers — not a diagnosis and not an '
                       'assessment of the person.')
         note.setWordWrap(True)
-        note.setStyleSheet('color:#9aadba; font-size:11px;')
+        note.setStyleSheet('color:#6E6961; font-size:11px;')
         form.addRow(note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                    | QDialogButtonBox.StandardButton.Cancel)
@@ -242,7 +242,7 @@ class HistoryDialog(QDialog):
         middle.addWidget(self.session_list)
         self.baseline_label = QLabel('No baseline for this subject.')
         self.baseline_label.setWordWrap(True)
-        self.baseline_label.setStyleSheet('background:#182730; padding:6px; font-size:11px;')
+        self.baseline_label.setStyleSheet('background:#FBF7F1; padding:6px; font-size:11px;')
         middle.addWidget(self.baseline_label)
         self.baseline_button = QPushButton('Set as baseline…')
         self.baseline_button.setToolTip('Store the selected session as this subject\'s baseline '
@@ -370,7 +370,7 @@ class HistoryDialog(QDialog):
                 widget.setParent(None); widget.deleteLater()
         label = QLabel(message)
         label.setWordWrap(True)
-        label.setStyleSheet('color:#9aadba;')
+        label.setStyleSheet('color:#6E6961;')
         self.chart_row.addWidget(label)
         self.chart_row.addStretch()
 
@@ -380,7 +380,7 @@ class HistoryDialog(QDialog):
         box = QVBoxLayout(holder)
         box.setContentsMargins(4, 4, 4, 4)
         caption = QLabel(path.name)
-        caption.setStyleSheet('color:#9aadba; font-size:10px;')
+        caption.setStyleSheet('color:#6E6961; font-size:10px;')
         box.addWidget(caption)
         image = QLabel()
         if pixmap.isNull():
@@ -535,14 +535,14 @@ class NeuroSyncApp(QMainWindow):
         self.setWindowTitle('NeuroSync | Live EEG • research viewer (BrainBit + DragonEEG)')
         self.resize(1600, 960)
         self.setMinimumSize(1180, 820)
-        self.setStyleSheet('''QWidget { background:#101820; color:#e3edf4; font-size:12px; }
-            QPushButton,QComboBox { background:#20323e; padding:9px; border:1px solid #466070; border-radius:4px; }
-            QPushButton:disabled { color:#667782; } QPushButton:hover { background:#304856; }
-            QTableWidget { gridline-color:#314550; background:#13212c; }
-            QHeaderView::section { background:#20323e; color:#cddfe8; padding:6px; }
-            QLineEdit, QTextBrowser, QListWidget { background:#13212c; border:1px solid #466070; padding:5px; }
-            QStatusBar { color:#7ce0c5; }''')
-        pg.setConfigOptions(antialias=True, background='#101820', foreground='#b8cbd6')
+        # Lab design system: one light theme for the window (idempotent; also
+        # covers verification scripts that build their own QApplication).
+        if _apply_lab_theme is not None:
+            try:
+                _apply_lab_theme(QApplication.instance())
+            except Exception as exc:
+                print(f'theme: {exc}', file=sys.stderr)
+        pg.setConfigOptions(antialias=True, background='#FFFFFF', foreground='#1A1A1A')
         self.channels = tuple(CHANNELS)
         self.fs = devices.CLASSIC.fs
         self.samples = deque(maxlen=BUFFER_SECONDS * self.fs)
@@ -601,7 +601,7 @@ class NeuroSyncApp(QMainWindow):
         if note:
             label = QLabel(note)
             label.setWordWrap(True)
-            label.setStyleSheet('color:#9aadba; font-size:11px;')
+            label.setStyleSheet('color:#6E6961; font-size:11px;')
             layout.addWidget(label)
         return widget, layout
 
@@ -609,7 +609,7 @@ class NeuroSyncApp(QMainWindow):
         central = QWidget(); self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         heading = QLabel('NEUROSYNC  /  LIVE EEG RESEARCH VIEWER')
-        heading.setStyleSheet('font-size:21px; font-weight:700; color:#8be6ce; padding:6px;')
+        heading.setStyleSheet('font-size:21px; font-weight:700; color:#E8541F; padding:6px;')
         layout.addWidget(heading)
 
         toolbar = QHBoxLayout()
@@ -635,7 +635,7 @@ class NeuroSyncApp(QMainWindow):
         controls = QHBoxLayout()
         self.subject_button = QPushButton('Set subject…')
         self.subject_label = QLabel('Subject: not set (required before saving)')
-        self.subject_label.setStyleSheet('color:#f0c47b;')
+        self.subject_label.setStyleSheet('color:#9A5B00;')
         controls.addWidget(self.subject_button); controls.addWidget(self.subject_label)
         controls.addStretch()
         controls.addWidget(QLabel('Band waveform channel'))
@@ -652,7 +652,7 @@ class NeuroSyncApp(QMainWindow):
         layout.addLayout(controls)
 
         self.connection_label = QLabel('BLE disconnected | no device selected | 0 samples')
-        self.connection_label.setStyleSheet('padding:7px; background:#182730; color:#b9cad7;')
+        self.connection_label.setStyleSheet('padding:7px; background:#FBF7F1; color:#6E6961;')
         layout.addWidget(self.connection_label)
         self.device_notes = QLabel(
             'DragonEEG first pairing: put the headset in pairing mode before scanning; the SDK '
@@ -661,7 +661,7 @@ class NeuroSyncApp(QMainWindow):
             'unconfigured Dragon streams flat zeros. Resistances are read in ohms per channel with '
             'A1/A2/Bias reference values.')
         self.device_notes.setWordWrap(True)
-        self.device_notes.setStyleSheet('padding:6px; background:#16232c; color:#9fb6c3; font-size:11px;')
+        self.device_notes.setStyleSheet('padding:6px; background:#FBF7F1; color:#9fb6c3; font-size:11px;')
         layout.addWidget(self.device_notes)
 
         split = QSplitter(Qt.Orientation.Horizontal); layout.addWidget(split, 1)
@@ -701,7 +701,7 @@ class NeuroSyncApp(QMainWindow):
         self.bars_plot.setLabel('left', 'power', units='µV²')
         self.bars_plot.setMinimumHeight(190)
         self.bars_absolute = pg.BarGraphItem(x=[], height=[], width=.6)
-        self.bars_relative = pg.BarGraphItem(x=[], height=[], width=.6, brush='#3f6379')
+        self.bars_relative = pg.BarGraphItem(x=[], height=[], width=.6, brush='#D9D1C5')
         self.bars_plot.addItem(self.bars_relative)
         self.bars_plot.addItem(self.bars_absolute)
         bars.addWidget(self.bars_plot)
@@ -751,13 +751,13 @@ class NeuroSyncApp(QMainWindow):
         self.map_image.setLookupTable(self.map_cmap.getLookupTable(nPts=256))
         self.map_plot.addItem(self.map_image)
         outline_x, outline_y = topomap.head_outline(181)
-        self.map_plot.plot(outline_x, outline_y, pen=pg.mkPen('#6f8ea0', width=1.4))
-        self.map_plot.plot([-.22, 0, .22], [.97, 1.14, .97], pen=pg.mkPen('#6f8ea0', width=1.4))
-        self.map_plot.plot([-1, -1.12, -1.12, -1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6f8ea0', width=1.4))
-        self.map_plot.plot([1, 1.12, 1.12, 1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6f8ea0', width=1.4))
-        self.map_plot.plot([-.62, .62], [-1.06, -1.06], pen=pg.mkPen('#6f8ea0', width=1.4))
-        self.map_electrodes = pg.ScatterPlotItem(size=7, brush=pg.mkBrush('#e3edf4'),
-                                                 pen=pg.mkPen('#20323e'))
+        self.map_plot.plot(outline_x, outline_y, pen=pg.mkPen('#6E6961', width=1.4))
+        self.map_plot.plot([-.22, 0, .22], [.97, 1.14, .97], pen=pg.mkPen('#6E6961', width=1.4))
+        self.map_plot.plot([-1, -1.12, -1.12, -1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6E6961', width=1.4))
+        self.map_plot.plot([1, 1.12, 1.12, 1], [-.22, -.12, .12, .22], pen=pg.mkPen('#6E6961', width=1.4))
+        self.map_plot.plot([-.62, .62], [-1.06, -1.06], pen=pg.mkPen('#6E6961', width=1.4))
+        self.map_electrodes = pg.ScatterPlotItem(size=7, brush=pg.mkBrush('#1A1A1A'),
+                                                 pen=pg.mkPen('#F1EBE2'))
         self.map_plot.addItem(self.map_electrodes)
         try:
             self.map_bar = pg.ColorBarItem(colorMap=self.map_cmap, interactive=False,
@@ -769,7 +769,7 @@ class NeuroSyncApp(QMainWindow):
         map_controls = QHBoxLayout()
         self.map_status = QLabel('Waiting for a valid five-second window.')
         self.map_status.setWordWrap(True)
-        self.map_status.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.map_status.setStyleSheet('color:#6E6961; font-size:11px;')
         self.map_export_button = QPushButton('Export head map PNG…')
         map_controls.addWidget(self.map_status, 1)
         map_controls.addWidget(self.map_export_button)
@@ -791,7 +791,7 @@ class NeuroSyncApp(QMainWindow):
         trend.addWidget(self.trend_plot)
         self.trend_status = QLabel('Set a subject and save sessions to see a trend.')
         self.trend_status.setWordWrap(True)
-        self.trend_status.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.trend_status.setStyleSheet('color:#6E6961; font-size:11px;')
         trend.addWidget(self.trend_status)
         middle.addWidget(trend_panel)
         middle_scroll = QScrollArea(); middle_scroll.setWidgetResizable(True); middle_scroll.setWidget(middle_side)
@@ -802,11 +802,11 @@ class NeuroSyncApp(QMainWindow):
         right.addWidget(QLabel('LATEST 5 SECONDS  ·  refreshed every second'))
         self.conclusion = QLabel('Waiting for five seconds of continuous EEG.')
         self.conclusion.setWordWrap(True)
-        self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#20323e;')
+        self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#F1EBE2;')
         right.addWidget(self.conclusion)
         self.predominant = QLabel('PREDOMINANT RHYTHM · — (waiting for a valid window)')
         self.predominant.setWordWrap(True)
-        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#17262f; color:#e3edf4;')
+        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#FBF7F1; color:#1A1A1A;')
         right.addWidget(self.predominant)
         self.progress_label = QLabel('Window: 0 / 1250 samples')
         right.addWidget(self.progress_label)
@@ -853,13 +853,13 @@ class NeuroSyncApp(QMainWindow):
         stable_note = QLabel('Averages many clean 2 s epochs and excludes artifact epochs (moves, '
                              'blinks, clenching, mains), so it is more stable than the single 5 s '
                              'view. Descriptive only; not a diagnosis.')
-        stable_note.setWordWrap(True); stable_note.setStyleSheet('color:#9aadba; font-size:11px;')
+        stable_note.setWordWrap(True); stable_note.setStyleSheet('color:#6E6961; font-size:11px;')
         right.addWidget(stable_note)
         right.addWidget(QLabel('BASELINE · per-subject predominant-wave reference (local only)'))
         self.baseline_status = QLabel('No baseline set — set a subject, then capture one from a '
                                       'passing estimate.')
         self.baseline_status.setWordWrap(True)
-        self.baseline_status.setStyleSheet('background:#182730; padding:8px; font-size:11px;')
+        self.baseline_status.setStyleSheet('background:#FBF7F1; padding:8px; font-size:11px;')
         right.addWidget(self.baseline_status)
         baseline_row = QHBoxLayout()
         baseline_row.addWidget(QLabel('Condition'))
@@ -893,12 +893,12 @@ class NeuroSyncApp(QMainWindow):
         right.addWidget(self.baseline_table)
         self.baseline_note = QLabel(baseline.BASELINE_NOTE + ' ' + baseline.CONDITION_NOTE)
         self.baseline_note.setWordWrap(True)
-        self.baseline_note.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.baseline_note.setStyleSheet('color:#6E6961; font-size:11px;')
         right.addWidget(self.baseline_note)
         right.addWidget(QLabel('LOCAL HISTORY  ·  recordings/subjects/ (never uploaded)'))
         self.history_label = QLabel('No saved sessions yet.')
         self.history_label.setWordWrap(True)
-        self.history_label.setStyleSheet('background:#182730; padding:8px; font-size:11px;')
+        self.history_label.setStyleSheet('background:#FBF7F1; padding:8px; font-size:11px;')
         right.addWidget(self.history_label)
         self.contact_title = QLabel('ELECTRODE CONTACT  ·  not checked')
         right.addWidget(self.contact_title)
@@ -911,7 +911,7 @@ class NeuroSyncApp(QMainWindow):
         self.quality_label = QLabel('Signal quality unverified. Keep still; relax jaw; avoid blinking '
                                     'during a short study.')
         self.quality_label.setWordWrap(True)
-        self.quality_label.setStyleSheet('color:#f0c47b; padding:8px;')
+        self.quality_label.setStyleSheet('color:#9A5B00; padding:8px;')
         right.addWidget(self.quality_label)
         right.addWidget(QLabel('AI DOCTOR  ·  ' + ai_doctor.backend_label()
                                + '  ·  assistive only'))
@@ -923,14 +923,14 @@ class NeuroSyncApp(QMainWindow):
         right.addLayout(ai_row)
         self.ai_status = QLabel('Model: ' + ai_doctor.effective_model()
                                 + ' · endpoint ' + ai_doctor.endpoint_label() + ' · offline check on use')
-        self.ai_status.setWordWrap(True); self.ai_status.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.ai_status.setWordWrap(True); self.ai_status.setStyleSheet('color:#6E6961; font-size:11px;')
         right.addWidget(self.ai_status)
         self.ai_text = QLabel('Ask for an assistive description of the latest measured numbers. Only '
                               'derived values (band powers, quality flags, contact, transport '
                               f'counters) are sent to {ai_doctor.data_destination()}; raw EEG '
                               'samples are never sent. Not a medical device and not a diagnosis.')
         self.ai_text.setWordWrap(True)
-        self.ai_text.setStyleSheet('background:#182730; padding:10px; font-size:11px;')
+        self.ai_text.setStyleSheet('background:#FBF7F1; padding:10px; font-size:11px;')
         right.addWidget(self.ai_text)
         right.addWidget(QLabel('LIVE CHAT  ·  ' + ai_doctor.backend_label()
                                + ' monitor  ·  updates while recording'))
@@ -956,11 +956,11 @@ class NeuroSyncApp(QMainWindow):
                                   + ' describes the measured numbers only; assistive, not a '
                                   'diagnosis.')
         self.chat_status.setWordWrap(True)
-        self.chat_status.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.chat_status.setStyleSheet('color:#6E6961; font-size:11px;')
         right.addWidget(self.chat_status)
         self.chat_log = QTextBrowser()
         self.chat_log.setMinimumHeight(230)
-        self.chat_log.setStyleSheet('QTextBrowser { background:#12181f; color:#dbe6ee; '
+        self.chat_log.setStyleSheet('QTextBrowser { background:#FFFFFF; color:#1A1A1A; '
                                     'border:1px solid #26333f; }')
         right.addWidget(self.chat_log)
         chat_send_row = QHBoxLayout()
@@ -975,7 +975,7 @@ class NeuroSyncApp(QMainWindow):
                                 + '). Simulated sessions stay labelled. Not a medical '
                                   'interpretation.')
         self.chat_note.setWordWrap(True)
-        self.chat_note.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.chat_note.setStyleSheet('color:#6E6961; font-size:11px;')
         right.addWidget(self.chat_note)
         self.chat_toggle.clicked.connect(self.toggle_chat_monitor)
         self.chat_clear.clicked.connect(self.clear_chat)
@@ -994,7 +994,7 @@ class NeuroSyncApp(QMainWindow):
                         'interpolations. Contact checks and interruptions restart the five-second '
                         'window. Recordings stay on this PC; AI provenance: '
                         + ai_doctor.provenance_label() + '.')
-        footer.setWordWrap(True); footer.setStyleSheet('color:#9aadba; padding:6px;')
+        footer.setWordWrap(True); footer.setStyleSheet('color:#6E6961; padding:6px;')
         layout.addWidget(footer)
 
         # signals
@@ -1045,7 +1045,7 @@ class NeuroSyncApp(QMainWindow):
             self.contact_labels[name] = label
             self.contact_layout.addWidget(label)
         self.contact_aux_label = QLabel('A1/A2/Bias: not checked')
-        self.contact_aux_label.setStyleSheet('color:#9aadba; font-size:11px;')
+        self.contact_aux_label.setStyleSheet('color:#6E6961; font-size:11px;')
         self.contact_layout.addWidget(self.contact_aux_label)
 
     def _reset_buffers(self):
@@ -1258,7 +1258,7 @@ class NeuroSyncApp(QMainWindow):
             return
         self.subject = subject
         self.subject_label.setText(f"Subject: {subject['name']} · {subject['phone'] or 'no phone'}")
-        self.subject_label.setStyleSheet('color:#7cddaf;')
+        self.subject_label.setStyleSheet('color:#1F7A4B;')
         self.refresh_trend()
         self.load_baseline()
 
@@ -1310,7 +1310,7 @@ class NeuroSyncApp(QMainWindow):
         self.baseline_delta = delta
         if not delta.get('available'):
             self.baseline_delta_label.setText('vs baseline: ' + baseline.reason_text(delta.get('reason')))
-            self.baseline_delta_label.setStyleSheet('font-size:11px; color:#9aadba;')
+            self.baseline_delta_label.setStyleSheet('font-size:11px; color:#6E6961;')
         else:
             text = baseline.one_line(delta)
             caution = []
@@ -1323,15 +1323,15 @@ class NeuroSyncApp(QMainWindow):
                 text += ' · caution: ' + '; '.join(caution)
             self.baseline_delta_label.setText(text)
             self.baseline_delta_label.setStyleSheet(
-                'font-size:11px; color:' + ('#f0c47b' if caution else '#7cddaf') + ';')
+                'font-size:11px; color:' + ('#9A5B00' if caution else '#1F7A4B') + ';')
         for row, (name, base, current, change) in enumerate(baseline.band_table(delta)):
             self.baseline_table.item(row, 1).setText('—' if base is None else f'{base:.1f}%')
             self.baseline_table.item(row, 2).setText('—' if current is None else f'{current:.1f}%')
             item = self.baseline_table.item(row, 3)
             item.setText('—' if change is None else f'{change:+.1f}')
-            item.setForeground(QColor('#9aadba' if change is None
-                                      else ('#7cddaf' if change > 0 else
-                                            ('#ffab83' if change < 0 else '#9aadba'))))
+            item.setForeground(QColor('#6E6961' if change is None
+                                      else ('#1F7A4B' if change > 0 else
+                                            ('#ffab83' if change < 0 else '#6E6961'))))
         if self.baseline is not None:
             note = baseline.interpretive_note(self.baseline)
             self.baseline_note.setText((note + ' ' if note else '') + baseline.CONDITION_NOTE)
@@ -1516,12 +1516,12 @@ class NeuroSyncApp(QMainWindow):
         if field is None:
             raise RuntimeError(f'no usable electrodes for the {band} map')
         plot = pg.PlotWidget()
-        plot.setBackground('#0e1c26')
+        plot.setBackground('#FFFFFF')
         plot.setAspectLocked(True)
         plot.setRange(xRange=(-1.32, 1.32), yRange=(-1.32, 1.32), padding=0)
         plot.getPlotItem().setTitle(
             f'NeuroSync · {band} relative power (%) · schematic head map',
-            size='15pt', color='#e3edf4')
+            size='15pt', color='#1A1A1A')
         outline_pen = pg.mkPen('#7fa3b8', width=1.6)
         image = pg.ImageItem()
         image.setLookupTable(self.map_cmap.getLookupTable(nPts=256))
@@ -1534,7 +1534,7 @@ class NeuroSyncApp(QMainWindow):
         scalp = devices.scalp_channels(self.channels)
         positions = [topomap.ELECTRODE_POSITIONS[name] for name in scalp]
         plot.addItem(pg.ScatterPlotItem(
-            pos=np.asarray(positions), size=9, brush=pg.mkBrush('#f2f7fb'),
+            pos=np.asarray(positions), size=9, brush=pg.mkBrush('#FBF7F1'),
             pen=pg.mkPen('#12222c', width=1.2)))
         for (ex, ey), name in zip(positions, scalp):   # electrode labels, pushed outward
             lx = max(-1.28, min(1.28, ex * 1.16))
@@ -1694,8 +1694,8 @@ class NeuroSyncApp(QMainWindow):
                                 min_valid_channels=devices.aggregate_min_valid(names))
         self.last_report = report
         self.conclusion.setText(report['conclusion'])
-        self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#20323e; color:'
-                                      + ('#8be6ce' if report['valid'] else '#f0c47b'))
+        self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#F1EBE2; color:'
+                                      + ('#E8541F' if report['valid'] else '#9A5B00'))
         self.quality_label.setText(report['reason'])
         for row, name in enumerate(BANDS):
             band = report['bands'].get(name, {})
@@ -1728,8 +1728,8 @@ class NeuroSyncApp(QMainWindow):
         """One-line 'most predominant brain wave' read-out (descriptive only)."""
         if not isinstance(estimate, dict) or not estimate.get('dominant'):
             self.predominant.setText('PREDOMINANT RHYTHM · — (waiting for a valid window)')
-            self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#17262f; '
-                                           'color:#e3edf4;')
+            self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#FBF7F1; '
+                                           'color:#1A1A1A;')
             return
         text = f"PREDOMINANT RHYTHM · {str(estimate.get('dominant')).upper()}"
         share = estimate.get('dominant_pct')
@@ -1739,8 +1739,8 @@ class NeuroSyncApp(QMainWindow):
         if peak is not None:
             text += f" · peak {float(peak):.1f} Hz"
         self.predominant.setText(text + f"  ({source})")
-        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#17262f; '
-                                       'color:#8be6ce;')
+        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#FBF7F1; '
+                                       'color:#E8541F;')
 
     def _fill_channel_table(self, report):
         channels = list(report.get('channels', {}))
@@ -1758,7 +1758,7 @@ class NeuroSyncApp(QMainWindow):
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(str(text))
                 if column == 0:
-                    item.setForeground(QColor('#cde6f2'))
+                    item.setForeground(QColor('#1A1A1A'))
                 if not entry.get('valid') and column == 3:
                     item.setForeground(QColor('#ffab83'))
                 self.channel_table.setItem(row, column, item)
@@ -2000,8 +2000,8 @@ class NeuroSyncApp(QMainWindow):
         if not widget_alive(self.chat_log):
             return None
         palette = {'user': ('#9fd3ff', 'YOU'),
-                   'assistant': ('#8be6ce', ai_doctor.backend_name().upper()),
-                   'sys': ('#f0c47b', '—')}
+                   'assistant': ('#E8541F', ai_doctor.backend_name().upper()),
+                   'sys': ('#9A5B00', '—')}
         colour, who = palette.get(role, palette['sys'])
         label = who + (f' · {meta}' if meta else '')
         cursor = self.chat_log.textCursor()
@@ -2009,7 +2009,7 @@ class NeuroSyncApp(QMainWindow):
         cursor.insertHtml(
             f'<p style="margin:2px 0 0; color:{colour}; font-size:8pt;">{esc_html(label)}</p>')
         body = esc_html(text or '').replace('\n', '<br>')
-        cursor.insertHtml(f'<p style="margin:0 0 8px; color:#dbe6ee;">{body}</p>')
+        cursor.insertHtml(f'<p style="margin:0 0 8px; color:#1A1A1A;">{body}</p>')
         self.chat_log.ensureCursorVisible()
         return cursor
 
@@ -2109,7 +2109,7 @@ class NeuroSyncApp(QMainWindow):
             good = value is not None and 0 < value <= 1e6
             display = f'{value / 1000:,.0f} kΩ' if value is not None else 'open / unavailable'
             label.setText(f'{name}: {display} · ' + ('within ≤1 MΩ' if good else 'CHECK CONTACT'))
-            label.setStyleSheet('color:' + ('#7cddaf' if good else '#ffab83'))
+            label.setStyleSheet('color:' + ('#1F7A4B' if good else '#ffab83'))
         aux = contact.get('aux') or {}
         if aux:
             text = ' · '.join(
@@ -2126,7 +2126,7 @@ class NeuroSyncApp(QMainWindow):
         for curve in list(self.raw_curves.values()) + list(self.band_curves.values()):
             curve.clear()
         self.conclusion.setText(reason)
-        self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#20323e; color:#e3edf4;')
+        self.conclusion.setStyleSheet('font-size:17px; padding:12px; background:#F1EBE2; color:#1A1A1A;')
         self.quality_label.setText('No conclusion until a new clean, continuous five-second window is available.')
         for row in range(5):
             self.power_table.item(row, 1).setText('—'); self.power_table.item(row, 2).setText('—')
@@ -2140,8 +2140,8 @@ class NeuroSyncApp(QMainWindow):
         self.psd_curve.clear()
         self.avg_curve.clear()
         self.predominant.setText('PREDOMINANT RHYTHM · — (no current estimate)')
-        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#17262f; '
-                                       'color:#e3edf4;')
+        self.predominant.setStyleSheet('font-size:15px; padding:9px; background:#FBF7F1; '
+                                       'color:#1A1A1A;')
         self.map_image.clear()
         self.map_status.setText('Waiting for a valid five-second window.')
         self.update_buttons()

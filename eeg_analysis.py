@@ -46,8 +46,8 @@ BANDS = OrderedDict([
     ('Beta', (13., 30.)), ('Gamma', (30., 45.)),
 ])
 COLORS = {
-    'Delta': '#B69CFF', 'Theta': '#64B5F6', 'Alpha': '#69DB9C',
-    'Beta': '#FFB454', 'Gamma': '#F28BCB',
+    'Delta': '#7C5CFF', 'Theta': '#2C5C8F', 'Alpha': '#1F7A4B',
+    'Beta': '#C98A12', 'Gamma': '#C8341C',
 }
 MIN_TRACE_SAMPLES = 64
 
