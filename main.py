@@ -1005,8 +1005,11 @@ class NeuroSyncApp(QMainWindow):
         # explicit Refresh button; it is deliberately NOT connected to
         # analysis_timer (the 1 s live window).
         self.qeeg_panel = qeeg_ui.QEEGPanel(data_provider=self.qeeg_data,
-                                            baseline_provider=self.qeeg_baseline_data)
+                                            baseline_provider=self.qeeg_baseline_data,
+                                            sessions_provider=self.qeeg_sessions,
+                                            session_loader=self.qeeg_session_data)
         self.qeeg_panel.report_handler = self.add_qeeg_to_patient_report
+        self.qeeg_panel.raw_trace_requested.connect(self.open_raw_traces)
         self.tabs.addTab(self.qeeg_panel, 'qEEG grid')
         self.tabs.currentChanged.connect(self._qeeg_tab_changed)
 
@@ -1666,6 +1669,78 @@ class NeuroSyncApp(QMainWindow):
         label = f'{condition}, saved {set_at}'.strip()
         return {'metrics': metrics, 'label': label, 'n': len(columns),
                 'condition': condition}
+
+    def open_raw_traces(self):
+        """The qEEG reminder's link: show the tab that draws the unfiltered traces."""
+        self.tabs.setCurrentIndex(0)
+
+    def qeeg_sessions(self):
+        """Saved sessions of this subject, with the metadata an EC/EO pick needs.
+
+        Called only when the Compare EC/EO… button is pressed — never from the
+        analysis timer. The summary is read per session so the condition and
+        the reference the sheet was saved with travel with the picker entry.
+        """
+        if not self.subject or not self.subject.get('name'):
+            return []
+        try:
+            entries = storage.list_sessions(SUBJECT_ROOT, self.subject['name'],
+                                            self.subject.get('phone', ''))
+        except OSError:
+            return []
+        sessions = []
+        for entry in entries:
+            folder = Path(entry['path'])
+            summary = storage.read_json_object(folder / storage.SUMMARY_FILE) or {}
+            record = summary.get('qeeg_grid') if isinstance(summary.get('qeeg_grid'), dict) else {}
+            sessions.append({
+                'session_id': entry.get('session_id'),
+                'path': str(folder),
+                'started_at': entry.get('started_at'),
+                'label': entry.get('started_at') or folder.name,
+                'device': entry.get('device_type') or entry.get('device_label') or '',
+                'device_label': entry.get('device_label'),
+                'channels': list(entry.get('channels') or []),
+                'condition': record.get('condition') or summary.get('condition') or '',
+                'reference_kind': record.get('reference_kind') or '',
+            })
+        return sessions
+
+    def qeeg_session_data(self, entry):
+        """Raw scalp samples + metadata for one saved session (loaded on demand)."""
+        loaded = storage.load_session(Path(entry['path']))
+        summary = loaded.get('summary') or {}
+        header = loaded.get('raw_header') or []
+        scalp = tuple(devices.scalp_channels(entry.get('channels') or self.channels))
+        columns = []
+        for index, column in enumerate(header):
+            if not (column.startswith('raw_') and column.endswith('_uV')):
+                continue
+            name = column[4:-3]
+            if name in scalp:
+                columns.append((index, name))
+        rows = loaded.get('raw_rows') or []
+        if len(columns) < 3 or len(rows) < 64:
+            raise ValueError('that session has no usable raw buffer (needs at least 3 scalp '
+                             'channels and 64 rows)')
+        try:
+            matrix = np.asarray([[float(row[index]) for index, _name in columns]
+                                 for row in rows], dtype=float)
+        except (TypeError, ValueError, IndexError) as exc:
+            raise ValueError(f'that session raw buffer is not numeric: {exc}')
+        record = summary.get('qeeg_grid') if isinstance(summary.get('qeeg_grid'), dict) else {}
+        folder = Path(entry['path'])
+        return {
+            'samples': matrix,
+            'fs': float(summary.get('fs_hz') or 250.0),
+            'channels': [name for _index, name in columns],
+            'label': entry.get('label') or entry.get('started_at') or folder.name,
+            'condition': (record.get('condition') or summary.get('condition')
+                          or entry.get('condition') or ''),
+            'device': summary.get('device_type') or entry.get('device') or '',
+            'reference_kind': (record.get('reference_kind')
+                               or entry.get('reference_kind') or ''),
+        }
 
     def add_qeeg_to_patient_report(self):
         """Write the exported sheet into the latest saved session and its report metadata."""

@@ -36,6 +36,7 @@ import storage
 BAND_ORDER = ('Delta', 'Theta', 'Alpha', 'Beta', 'Gamma')
 MAX_CHART_MB = 40.0
 QEEG_NOTE = 'Not a normative clinical database; educational display only.'
+RAW_TRACE_REMINDER = 'Check the raw traces before trusting a map — artifact looks like a region.'
 
 # Electrode limitation of each supported headset, printed next to the numbers it
 # produced: a four-electrode BrainBit is not a 19-channel qEEG, and the
@@ -123,6 +124,77 @@ def _charts_html(charts: list, budget: dict) -> str:
     return '<div class="figs">' + ''.join(parts) + '</div>' if parts else ''
 
 
+def _tbr_html(record: dict) -> str:
+    """Theta/beta card as a table: per-channel ratio, channel mean, teaching note."""
+    data = record.get('theta_beta')
+    data = data if isinstance(data, dict) else {}
+    channels = data.get('channels') or {}
+    if not channels and data.get('mean') is None:
+        return ''
+    cells = list(channels.items())
+    rows = []
+    for start in range(0, len(cells), 4):
+        chunk = cells[start:start + 4]
+        tds = ''.join(f'<td>{_esc(name)}</td><td>{_fmt(value, 2)}</td>'
+                      for name, value in chunk)
+        rows.append('<tr>' + tds + '<td></td><td></td>' * (4 - len(chunk)) + '</tr>')
+    head = ''.join('<th>Channel</th><th>θ/β</th>' for _ in range(4))
+    mean = data.get('mean')
+    flag = bool(data.get('flag'))
+    mean_line = (f"Channel mean θ/β {_fmt(mean, 2)}" if mean is not None
+                 else 'Channel mean θ/β —')
+    if flag:
+        mean_line += (' — the mean is at or above 3.0 and both bands are usable; this is the '
+                      'pattern Dr. Leigh describes, not a diagnosis.')
+    elif mean is not None:
+        mean_line += ' (below the 3:1 flag; nothing is inferred from one number).'
+    note = data.get('note') or ''
+    return (f'<h3>Theta / Beta</h3>'
+            f"<p class='meta'>{_esc(mean_line)}</p>"
+            f'<table class="tbr"><tr>{head}</tr>{"".join(rows)}</table>'
+            f"<p class='meta'>{_esc(note)}</p>")
+
+
+def _region_html(record: dict) -> str:
+    """Region roll-up: band rows × region columns of mean z, flagged cells marked."""
+    data = record.get('regions')
+    data = data if isinstance(data, dict) else {}
+    if not data.get('available'):
+        return ''
+    bands = [str(band) for band in data.get('bands') or []]
+    regions = [str(region) for region in data.get('regions') or []]
+    values = data.get('values') or {}
+    if not bands or not regions:
+        return ''
+    flagged = {(item.get('band'), item.get('region')): item
+               for item in data.get('flags') or [] if isinstance(item, dict)}
+    head = '<tr><th>Band</th>' + ''.join(f'<th>{_esc(region.replace("_", " "))}</th>'
+                                         for region in regions) + '</tr>'
+    rows = []
+    for band in bands:
+        cells = []
+        for region in regions:
+            value = (values.get(band) or {}).get(region)
+            is_flag = (band, region) in flagged
+            text = '—' if value is None else f'{float(value):+.2f}'
+            if is_flag:
+                text += ' ▲'
+            cells.append(f"<td class='{'flagcell' if is_flag else ''}'>{text}</td>")
+        rows.append(f'<tr><td>{_esc(band)}</td>{"".join(cells)}</tr>')
+    caption = ('Flagged: ' + '; '.join(
+        f"{_esc(item.get('band'))} · {_esc(str(item.get('region')).replace('_', ' '))} "
+        f"z {_fmt(item.get('z'), 2)}"
+        + (f" ({_esc(item.get('n_sites'))} sites)" if item.get('n_sites') else '')
+        for item in flagged.values())) if flagged else 'No region flagged (|z| ≥ 2 with ≥ 2 sites).'
+    rule = data.get('rule') or ('mean z per region; flag when |z| >= 2 with >= 2 sites')
+    row = data.get('row')
+    row_text = f'row: {str(row).replace("_", " ").title()} · ' if row else ''
+    return (f'<h3>Region roll-up (mean z)</h3>'
+            f'<table class="regions">{head}{"".join(rows)}</table>'
+            f"<p class='meta'>{_esc(caption)} · {_esc(row_text + rule)}. Regions with fewer than "
+            f"two available sites are omitted.</p>")
+
+
 def _qeeg_html(session: dict, budget: dict) -> str:
     """The qEEG 5x5 sheet section, with its reference printed above the image.
 
@@ -151,7 +223,15 @@ def _qeeg_html(session: dict, budget: dict) -> str:
         meta.append(f"channels: {len(record.get('channels') or [])}")
     if record.get('bands'):
         meta.append('bands: ' + ', '.join(str(band) for band in record.get('bands') or []))
+    if record.get('reference_source'):
+        meta.append(f"reference source: {record.get('reference_source')}")
+    if record.get('reference_age_band'):
+        meta.append(f"age band: {record.get('reference_age_band')}")
+    if record.get('norm_scope_warning'):
+        meta.append(str(record.get('norm_scope_warning')))
     meta_html = f"<p class='meta'>{_esc(' · '.join(meta))}</p>" if meta else ''
+    tbr_html = _tbr_html(record)
+    region_html = _region_html(record)
     figure = ''
     if image is not None:
         uri = _image_data_uri(image, budget)
@@ -160,6 +240,8 @@ def _qeeg_html(session: dict, budget: dict) -> str:
                       f'<figcaption>{_esc(image.name)}</figcaption></figure>')
     return (f'<h3>qEEG grid (reference: {_esc(label)})</h3>'
             f"<p class='meta'>{_esc(reference_line)}</p>{meta_html}{figure}"
+            f"{tbr_html}{region_html}"
+            f"<p class='meta'>{_esc(RAW_TRACE_REMINDER)}</p>"
             f"<p class='meta'><b>{_esc(QEEG_NOTE)}</b></p>")
 
 
@@ -315,6 +397,9 @@ def build(root, name: str, phone: str = '', out_path=None) -> Path:
  table {{ border-collapse:collapse; width:100%; font-size:12.5px; margin:4px 0 10px; }}
  th, td {{ text-align:left; padding:5px 8px; border-bottom:1px solid #22343f; }}
  th {{ color:#a8dcff; font-size:11.5px; }}
+ td.flagcell {{ background:#3a2c14; color:#ffd9a0; font-weight:700; }}
+ table.tbr td, table.tbr th {{ padding:3px 6px; font-size:12px; }}
+ table.regions td {{ font-size:11.5px; padding:3px 5px; }}
  .ai {{ background:#17242e; border:1px solid #2b4152; padding:10px; font-size:12.5px;
         white-space:pre-wrap; }}
  .note {{ background:#17242e; border-left:3px solid #4a7f9c; padding:8px 10px; margin:6px 0;

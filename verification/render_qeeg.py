@@ -58,6 +58,14 @@ def main():
     print('exported:', exported, exported.stat().st_size, 'bytes')
     print('reference:', window.qeeg_panel.reference_label.text())
     print('cells:', len(window.qeeg_panel.sheet.cells))
+    card = window.qeeg_panel.sheet.tbr_card
+    print('theta/beta mean:', card.mean_value, 'flag:', card.flagged,
+          'channels:', len(card.ratios))
+    table = window.qeeg_panel.sheet.region_table
+    print('region table visible:', table.isVisible(), 'cells:', len(table.cell_labels),
+          'flagged:', table.flag_count)
+    print('raw reminder:', window.qeeg_panel.raw_reminder.text())
+    print('norm reference loaded:', bool(window.qeeg_panel.norm_meta))
     window.close()
     app.processEvents()
     return 0
