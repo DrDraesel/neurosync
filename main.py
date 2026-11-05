@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QMessageBox, QCheckBox, QScrollArea, QGridLayout,
     QDialog, QLineEdit, QDialogButtonBox, QFormLayout, QListWidget, QListWidgetItem,
-    QTextBrowser, QFileDialog, QSizePolicy)
+    QTextBrowser, QFileDialog, QSizePolicy, QTabWidget)
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal, QBuffer, QIODevice, QRectF
 from PyQt6.QtGui import QColor, QPixmap, QTextCursor
 from PyQt6 import sip
@@ -43,6 +43,8 @@ import ai_doctor
 import baseline
 import devices
 import patient_report
+import qeeg
+import qeeg_ui
 import storage
 import topomap
 from simfeed import SimulatedEEGClient
@@ -664,7 +666,16 @@ class NeuroSyncApp(QMainWindow):
         self.device_notes.setStyleSheet('padding:6px; background:#FBF7F1; color:#9fb6c3; font-size:11px;')
         layout.addWidget(self.device_notes)
 
-        split = QSplitter(Qt.Orientation.Horizontal); layout.addWidget(split, 1)
+        # Two views: the live analysis board and the qEEG 5x5 sheet. Both keep
+        # their widgets alive, so switching tabs never loses the live window.
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs, 1)
+        live_page = QWidget()
+        live_layout = QVBoxLayout(live_page)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        self.tabs.addTab(live_page, 'Live analysis')
+
+        split = QSplitter(Qt.Orientation.Horizontal); live_layout.addWidget(split)
 
         # --- left: raw channel grid + frequency components -------------------
         left_side = QWidget(); left = QVBoxLayout(left_side)
@@ -988,6 +999,16 @@ class NeuroSyncApp(QMainWindow):
         scroller.setMinimumWidth(360); scroller.setMaximumWidth(520)
         scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         split.addWidget(scroller); split.setSizes([560, 470, 400])
+
+        # --- qEEG 5x5 sheet tab -------------------------------------------
+        # Its computation is cached and happens only on tab activation or the
+        # explicit Refresh button; it is deliberately NOT connected to
+        # analysis_timer (the 1 s live window).
+        self.qeeg_panel = qeeg_ui.QEEGPanel(data_provider=self.qeeg_data,
+                                            baseline_provider=self.qeeg_baseline_data)
+        self.qeeg_panel.report_handler = self.add_qeeg_to_patient_report
+        self.tabs.addTab(self.qeeg_panel, 'qEEG grid')
+        self.tabs.currentChanged.connect(self._qeeg_tab_changed)
 
         footer = QLabel('Raw EEG is unchanged. Colored components are window-filtered views with edge '
                         'effects. Power uses Welch PSD, not FFT amplitude. Head maps are schematic '
@@ -1565,6 +1586,142 @@ class NeuroSyncApp(QMainWindow):
         plot.setParent(None)
         plot.deleteLater()
         return png
+
+    # ------------------------------------------------------------- qEEG grid
+    def _qeeg_tab_changed(self, index):
+        """Tab activation is the only automatic recompute trigger (not the timer)."""
+        if not widget_alive(self.qeeg_panel):
+            return
+        if self.tabs.widget(index) is self.qeeg_panel:
+            self.qeeg_panel.refresh()
+
+    def qeeg_data(self):
+        """Scalp-only rolling buffer for the qEEG panel (aux D1/D2/D3 never enter)."""
+        skin = tuple(devices.scalp_channels(self.channels))
+        if len(skin) < 3 or not self.samples:
+            return None
+        try:
+            rows = np.asarray(self.samples, dtype=float)
+        except (TypeError, ValueError):
+            return None
+        if rows.ndim != 2 or rows.shape[1] != len(self.channels):
+            return None
+        positions = {name: index for index, name in enumerate(self.channels)}
+        indices = [positions[name] for name in skin if name in positions]
+        channels = [name for name in skin if name in positions]
+        if len(channels) < 3 or rows.shape[0] < 64:
+            return None
+        return {'samples': rows[:, indices], 'fs': float(self.fs), 'channels': channels,
+                'session_key': f'{id(self.samples)}:{self.session_started_at}'}
+
+    def qeeg_baseline_data(self):
+        """Metrics of this subject's saved baseline session, recomputed from its raw.csv.
+
+        The stored baseline.json only holds a band profile (dominant/peak), so the
+        per-channel mean/SD table a qEEG reference needs is rebuilt from the saved
+        baseline recording. When that session is missing or unreadable the caller
+        gets None and the panel says so instead of inventing a reference.
+        """
+        if not self.baseline or not self.subject or not self.subject.get('name'):
+            return None
+        session_id = self.baseline.get('session_id')
+        if not session_id:
+            return None
+        try:
+            sessions = storage.list_sessions(SUBJECT_ROOT, self.subject['name'],
+                                             self.subject.get('phone', ''))
+        except OSError:
+            return None
+        match = next((item for item in sessions if item.get('session_id') == session_id), None)
+        if match is None:
+            return None
+        try:
+            loaded = storage.load_session(Path(match['path']))
+        except (OSError, ValueError):
+            return None
+        scalp = tuple(devices.scalp_channels(self.channels))
+        columns = []
+        for index, column in enumerate(loaded.get('raw_header') or []):
+            if not (column.startswith('raw_') and column.endswith('_uV')):
+                continue
+            name = column[4:-3]
+            if name in scalp:
+                columns.append((index, name))
+        rows = loaded.get('raw_rows') or []
+        if len(columns) < 3 or len(rows) < 64:
+            return None
+        try:
+            matrix = np.asarray([[float(row[index]) for index, _name in columns]
+                                 for row in rows], dtype=float)
+        except (TypeError, ValueError, IndexError):
+            return None
+        summary = loaded.get('summary') or {}
+        fs = float(summary.get('fs_hz') or self.fs)
+        try:
+            metrics = qeeg.compute_metrics(matrix, fs, [name for _index, name in columns])
+        except (ValueError, TypeError):
+            return None
+        condition = self.baseline.get('condition') or 'condition not recorded'
+        set_at = str(self.baseline.get('set_at') or '')[:10]
+        label = f'{condition}, saved {set_at}'.strip()
+        return {'metrics': metrics, 'label': label, 'n': len(columns),
+                'condition': condition}
+
+    def add_qeeg_to_patient_report(self):
+        """Write the exported sheet into the latest saved session and its report metadata."""
+        if not self.subject or not self.subject.get('name'):
+            self.set_subject()
+            if not self.subject or not self.subject.get('name'):
+                return
+        name = self.subject['name']
+        phone = self.subject.get('phone', '')
+        try:
+            sessions = storage.list_sessions(SUBJECT_ROOT, name, phone)
+        except OSError as exc:
+            QMessageBox.warning(self, 'qEEG grid', f'Could not read the local store: {exc}')
+            return
+        if not sessions:
+            QMessageBox.warning(
+                self, 'No saved session',
+                'The qEEG sheet is written into a saved session folder, and this subject has '
+                'none yet. Save a session first (the raw buffer and summary are stored), then '
+                'press "Add to patient report" again.')
+            return
+        folder = Path(sessions[0]['path'])
+        if not self.qeeg_panel.has_grid():
+            self.qeeg_panel.refresh()
+        if not self.qeeg_panel.has_grid():
+            QMessageBox.warning(self, 'No qEEG grid',
+                                'The grid has not been computed yet — open the qEEG grid tab or '
+                                'press Refresh while a recording is running.')
+            return
+        summary_path = folder / storage.SUMMARY_FILE
+        summary = storage.read_json_object(summary_path)
+        if not isinstance(summary, dict):
+            QMessageBox.warning(self, 'Session summary missing',
+                                f'No readable {storage.SUMMARY_FILE} in {folder}.')
+            return
+        try:
+            png = self.qeeg_panel.sheet_png_bytes()
+            chart_folder = folder / storage.CHARTS_FOLDER
+            chart_folder.mkdir(exist_ok=True)
+            (chart_folder / 'qeeg_grid.png').write_bytes(png)
+            summary['charts'] = sorted(set(summary.get('charts') or []) | {'qeeg_grid.png'})
+            metadata = self.qeeg_panel.report_metadata()
+            metadata['image'] = 'charts/qeeg_grid.png'
+            metadata['added_at'] = datetime.now(timezone.utc).isoformat()
+            summary['qeeg_grid'] = metadata
+            storage.write_json_atomic(summary_path, summary)
+        except (OSError, RuntimeError, ValueError) as exc:
+            QMessageBox.warning(self, 'qEEG grid not saved', str(exc))
+            return
+        self.statusBar().showMessage(f'qEEG grid written to the session: {folder}')
+        QMessageBox.information(
+            self, 'qEEG grid added',
+            f'The sheet PNG was written to:\n{folder}\\charts\\qeeg_grid.png\n\n'
+            f'{metadata.get("reference_line")}\n\n'
+            'Open "Patient report (HTML)" to see the new qEEG grid section. '
+            + qeeg_ui.REPORT_NOTE)
 
     def refresh_history_summary(self):
         try:

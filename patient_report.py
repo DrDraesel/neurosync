@@ -35,6 +35,7 @@ import storage
 
 BAND_ORDER = ('Delta', 'Theta', 'Alpha', 'Beta', 'Gamma')
 MAX_CHART_MB = 40.0
+QEEG_NOTE = 'Not a normative clinical database; educational display only.'
 
 # Electrode limitation of each supported headset, printed next to the numbers it
 # produced: a four-electrode BrainBit is not a 19-channel qEEG, and the
@@ -112,12 +113,54 @@ def _image_data_uri(path: Path, budget: dict) -> str:
 def _charts_html(charts: list, budget: dict) -> str:
     parts = []
     for path in charts:
+        if Path(path).name == 'qeeg_grid.png':
+            continue                      # printed by its own reference-labelled section
         uri = _image_data_uri(Path(path), budget)
         if not uri:
             continue
         parts.append(f'<figure><img src="{uri}" alt="{_esc(Path(path).name)}">'
                      f'<figcaption>{_esc(Path(path).name)}</figcaption></figure>')
     return '<div class="figs">' + ''.join(parts) + '</div>' if parts else ''
+
+
+def _qeeg_html(session: dict, budget: dict) -> str:
+    """The qEEG 5x5 sheet section, with its reference printed above the image.
+
+    The reference block is whatever the panel recorded with the sheet
+    (kind/label/n). When a PNG exists without that block, the section still
+    prints "reference not recorded" and the fixed disclaimer — it never
+    invents a normative reference.
+    """
+    summary = session.get('summary') or {}
+    record = summary.get('qeeg_grid')
+    record = record if isinstance(record, dict) else {}
+    image = next((Path(path) for path in (session.get('charts') or [])
+                  if Path(path).name == 'qeeg_grid.png'), None)
+    if not record and image is None:
+        return ''
+    label = record.get('reference_label') or record.get('reference_kind') or 'not recorded'
+    reference_line = (record.get('reference_line')
+                      or 'Reference — not recorded with this session, so the sheet cannot be '
+                         'traced to a comparison. ' + QEEG_NOTE)
+    meta = []
+    if record.get('condition'):
+        meta.append(f"condition: {record.get('condition')}")
+    if record.get('reference_n') not in (None, ''):
+        meta.append(f"reference n: {record.get('reference_n')}")
+    if record.get('channels'):
+        meta.append(f"channels: {len(record.get('channels') or [])}")
+    if record.get('bands'):
+        meta.append('bands: ' + ', '.join(str(band) for band in record.get('bands') or []))
+    meta_html = f"<p class='meta'>{_esc(' · '.join(meta))}</p>" if meta else ''
+    figure = ''
+    if image is not None:
+        uri = _image_data_uri(image, budget)
+        if uri:
+            figure = (f'<figure class="qeeg"><img src="{uri}" alt="qEEG 5x5 grid">'
+                      f'<figcaption>{_esc(image.name)}</figcaption></figure>')
+    return (f'<h3>qEEG grid (reference: {_esc(label)})</h3>'
+            f"<p class='meta'>{_esc(reference_line)}</p>{meta_html}{figure}"
+            f"<p class='meta'><b>{_esc(QEEG_NOTE)}</b></p>")
 
 
 def _device_electrodes(summary: dict) -> str:
@@ -181,6 +224,7 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
                           if estimate.get('peak_hz') is not None else '')
                        + f" ({'stable estimate' if stable.get('valid') else '5 s window'}).</p>")
     ai_html = _ai_html(summary)
+    qeeg_html = _qeeg_html(session, budget)
     baseline = summary.get('vs_baseline') or {}
     baseline_html = ''
     if baseline:
@@ -203,6 +247,7 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
   {_bands_table(stable, 'Stable multi-epoch estimate')}
   {_channel_table(report)}
   {baseline_html}
+  {qeeg_html}
   {_charts_html(session.get('charts') or [], budget)}
   {ai_html}
 </section>"""
@@ -277,6 +322,8 @@ def build(root, name: str, phone: str = '', out_path=None) -> Path:
  .figs {{ display:flex; flex-wrap:wrap; gap:12px; }}
  figure {{ margin:0; width:320px; }}
  figure img {{ width:100%; border:1px solid #2b4152; border-radius:6px; }}
+ figure.qeeg {{ width:100%; }}
+ figure.qeeg img {{ width:100%; }}
  figcaption {{ color:#9fb6c3; font-size:11px; padding-top:3px; }}
  .banner {{ background:#3a2c14; border:1px solid #8a6a2a; color:#ffd9a0; padding:10px;
             font-size:12.5px; margin:12px 0; }}
