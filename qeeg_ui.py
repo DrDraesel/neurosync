@@ -1173,6 +1173,13 @@ class ComparisonView(QDialog):
         self.content.layout().activate()
         width = max(self.content.size().width(), 1500)
         height = max(self.content.sizeHint().height(), self.content.size().height(), 900)
+        # drop the on-screen scroll hint from the printed sheet
+        hint = ''
+        try:
+            hint = self.sheet.title.text()
+            self.sheet.title.setText(hint.split('  (scroll')[0])
+        except Exception:
+            pass
         pixmap = QPixmap(int(width * scale), int(height * scale))
         pixmap.fill(Qt.GlobalColor.white)
         painter = QPainter(pixmap)
@@ -1867,6 +1874,13 @@ class QEEGPanel(QWidget):
         resize and the right-hand columns would be clipped).
         """
         self.sheet.layout().activate()
+        # the on-screen hint does not belong on the printed sheet
+        hint = ''
+        try:
+            hint = self.sheet.title.text()
+            self.sheet.title.setText(hint.split('  (scroll')[0])
+        except Exception:
+            pass
         width = max(self.sheet.width(), 1080)
         # Render to the layout's own content height: the live sheet stretches to
         # fill the scroll area, which would otherwise export a tall white band.
@@ -1881,6 +1895,11 @@ class QEEGPanel(QWidget):
         painter.scale(scale, scale)
         self.sheet.render(painter, QPoint(0, 0))
         painter.end()
+        if hint:
+            try:
+                self.sheet.title.setText(hint)
+            except Exception:
+                pass
         return pixmap
 
     def sheet_png_bytes(self):
