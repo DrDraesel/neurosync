@@ -32,6 +32,13 @@ Device-specific work added for the DragonEEG (LENeuroEEG):
 The Dragon path is written against the installed SDK and its shipped sample
 (neurosdk/sample.py) and has NOT been exercised on physical Dragon hardware by
 this project; see METHODS.md for the exact list of open verification items.
+
+Bounded auto-reconnect (see MAX_RECONNECT / RECONNECT_BACKOFF_S): when the
+stream is lost (no EEG for 8 s, out of range, or any other streaming-phase
+exception) the client re-scans for the SAME device address with a fresh
+Scanner and reconnects up to MAX_RECONNECT times before reporting the error.
+A deliberate stop() is never reconnected; the device can never silently
+switch mid-session.
 """
 import math
 import time
@@ -48,6 +55,12 @@ from devices import CLASSIC, SCAN_FAMILIES
 
 CHANNELS = devices.CLASSIC_CHANNELS      # backward-compatible name
 GENERIC_SCALE_UV = 1e6                   # volts -> microvolts (see devices.py)
+
+# Bounded auto-reconnect after a lost stream. A lost stream is retried up to
+# MAX_RECONNECT times, each attempt preceded by the next backoff delay. A
+# deliberate stop (self._running = False) is never reconnected.
+MAX_RECONNECT = 4
+RECONNECT_BACKOFF_S = (2., 4., 8., 12.)
 
 
 class PacketTracker:
@@ -170,7 +183,9 @@ class EEGClient(QThread):
     def __init__(self, scanner_factory=Scanner, scan_seconds=15,
                  target_address='DA:BB:A3:A0:73:4E', auto_contact=False,
                  contact_seconds=5, selection_required=False,
-                 selection_timeout=120., device_spec=None):
+                 selection_timeout=120., device_spec=None,
+                 max_reconnect=MAX_RECONNECT,
+                 reconnect_backoff=RECONNECT_BACKOFF_S):
         super().__init__()
         self.scanner_factory = scanner_factory
         self.scan_seconds = scan_seconds
@@ -180,6 +195,8 @@ class EEGClient(QThread):
         self.selection_required = bool(selection_required)
         self.selection_timeout = float(selection_timeout)
         self.device_spec = device_spec
+        self.max_reconnect = int(max_reconnect)
+        self.reconnect_backoff = tuple(reconnect_backoff)
         self._running = True
         self.device = None
         self.scanner = None
@@ -221,6 +238,33 @@ class EEGClient(QThread):
         self.last_sample_at = self._last_callback = None
         self.rate_history.clear()
         self.stream_reset.emit(reason)
+
+    def _cleanup_device(self, stop_signal):
+        """Tear down the CURRENT device only (used mid-run and in ``finally``).
+
+        A partially-created sensor from a failed reconnect attempt is cleaned
+        up here too; nothing but the current ``self.device`` is ever touched.
+        """
+        if self.device is None:
+            return
+        if stop_signal:
+            try:
+                self.device.exec_command(SensorCommand.StopSignal)
+            except Exception as exc:
+                self._status(f'Stop warning: {exc}')
+        try:
+            self.device.signalDataReceived = None
+        except Exception:
+            pass
+        try:
+            self.device.resistDataReceived = None
+        except Exception:
+            pass
+        try:
+            self.device.disconnect()
+        except Exception as exc:
+            self._status(f'Disconnect warning: {exc}')
+        self.device = None
 
     def check_contact(self):
         self.contact_requested.set()
@@ -470,6 +514,9 @@ class EEGClient(QThread):
     def run(self):
         scanner = None
         streaming = False
+        streamed = False
+        attempts = 0
+        original_error = None
         try:
             self._running = True
             infos = {}
@@ -491,119 +538,183 @@ class EEGClient(QThread):
                 self.target_address = address
                 self.sensor_info = infos[address]
             info = self.sensor_info
-            address = str(getattr(info, 'Address', self.target_address) or self.target_address).upper()
-            family = getattr(info, 'SensFamily', None)
-            if self.device_spec is not None:
-                spec = self.device_spec
-            elif family is None:
-                # A scanner fixture / legacy entry without a family may still be
-                # the user's saved BrainBit address; anything else is refused.
-                spec = self._default_spec() if address == self.target_address else None
-            else:
-                spec = devices.spec_for_family(family)
-            if spec is None:
-                raise RuntimeError(
-                    f'This device family ({devices.family_name(family) or "unknown"}) is not '
-                    'supported by the app; nothing was started.')
-            self.device_spec = spec
-            if self.scanner is None:
-                raise RuntimeError('No scanner available; press Scan again.')
-            self.mode = 'connecting'
-            self._status(f'Connecting to {spec.label} via BLE...')
-            self.device = self.scanner.create_sensor(info)
-            report = self._prepare_device(spec)
-            self.amplifier_report = report
-            self.battery = self.device.batt_power
-            info_out = {'name': self.device.name, 'serial': self.device.serial_number,
-                        'address': address, 'battery': self.battery,
-                        'sampling_frequency': report.get('sampling_frequency'),
-                        'fs': self.fs, 'family': devices.family_name(family),
-                        'device_key': spec.key, 'device_label': spec.label,
-                        'channels': list(self.channels),
-                        'scalp_channels': list(devices.scalp_channels(self.channels)),
-                        'poly_channels': list(devices.poly_channels(self.channels)),
-                        'channel_source': self.channel_source,
-                        'pairing_required': bool(getattr(info, 'PairingRequired', False)),
-                        'rssi': getattr(info, 'RSSI', None),
-                        'configuration': report}
-            self.device_info.emit(info_out)
-            self._status(f"Connected {spec.label} | serial {info_out['serial']} | "
-                         f"battery {self.battery}% | {self.fs} Hz | {len(self.channels)} channels")
-            self.device.signalDataReceived = self._on_signal
-            if self.auto_contact:
-                self._measure_contact(resume=False)
-            if not self._running:
-                return
-            self._reset_stream('Connected; collecting five seconds')
-            self.device.exec_command(SensorCommand.StartSignal)
-            streaming = True
-            self.mode = 'signal'
-            start = last_report = time.monotonic()
-            self._drain_samples()
-            while self._running:
-                if self.contact_requested.is_set():
-                    self.contact_requested.clear()
-                    self._measure_contact(resume=True)
-                    start = time.monotonic()
-                self._drain_samples()
-                now = time.monotonic()
-                if now - (self.last_sample_at or start) > 8:
-                    raise RuntimeError('No EEG for 8s. Check power/range, then reconnect.')
-                if now - last_report >= 1:
-                    if self.device.state != SensorState.StateInRange:
-                        raise RuntimeError('Headset disconnected or out of range')
+            while True:
+                if not self._running:
+                    return
+                address = str(getattr(info, 'Address', self.target_address)
+                              or self.target_address).upper()
+                family = getattr(info, 'SensFamily', None)
+                if not streamed:
+                    # First connect only: resolve the family from the scanned
+                    # SensorInfo. Every reconnect reuses this spec, so a lost
+                    # stream can never silently switch to another device.
+                    if self.device_spec is not None:
+                        spec = self.device_spec
+                    elif family is None:
+                        # A scanner fixture / legacy entry without a family may still be
+                        # the user's saved BrainBit address; anything else is refused.
+                        spec = self._default_spec() if address == self.target_address else None
+                    else:
+                        spec = devices.spec_for_family(family)
+                    if spec is None:
+                        raise RuntimeError(
+                            f'This device family ({devices.family_name(family) or "unknown"}) is not '
+                            'supported by the app; nothing was started.')
+                    self.device_spec = spec
+                else:
+                    spec = self.device_spec
+                    if spec is None:
+                        raise RuntimeError('No device specification available; press Scan again.')
+                try:
+                    if self.scanner is None:
+                        raise RuntimeError('No scanner available; press Scan again.')
+                    self.mode = 'connecting'
+                    self._status(f'Connecting to {spec.label} via BLE...')
+                    self.device = self.scanner.create_sensor(info)
+                    report = self._prepare_device(spec)
+                    self.amplifier_report = report
                     self.battery = self.device.batt_power
-                    self.rate_history.append((now, self.sample_count))
-                    rate = None
-                    if len(self.rate_history) > 1:
-                        t0, n0 = self.rate_history[0]
-                        rate = (self.sample_count - n0) / (now - t0)
-                    metrics = {'samples': self.sample_count, 'rate_hz': rate,
-                               'gap_events': self.tracker.gap_events,
-                               'counter_anomalies': getattr(self.tracker, 'counter_anomalies', 0),
-                               'battery': self.battery, 'mode': self.mode,
-                               'channels': list(self.channels),
-                               'last_sample_age_s': None if self.last_sample_at is None
-                               else now - self.last_sample_at}
-                    self.metrics_received.emit(metrics)
-                    previous = self.sample_count - int(rate or 0)
-                    if len(self.rate_history) == 1 or self.sample_count // (7500 * max(1, len(self.channels) // 4)) \
-                            != previous // (7500 * max(1, len(self.channels) // 4)):
-                        self._status(f'Live EEG | {self.sample_count} samples | '
-                                     f'{len(self.channels)} channels | gaps {self.tracker.gap_events}')
-                    last_report = now
-                time.sleep(.01)
+                    if not streamed:
+                        info_out = {'name': self.device.name, 'serial': self.device.serial_number,
+                                    'address': address, 'battery': self.battery,
+                                    'sampling_frequency': report.get('sampling_frequency'),
+                                    'fs': self.fs, 'family': devices.family_name(family),
+                                    'device_key': spec.key, 'device_label': spec.label,
+                                    'channels': list(self.channels),
+                                    'scalp_channels': list(devices.scalp_channels(self.channels)),
+                                    'poly_channels': list(devices.poly_channels(self.channels)),
+                                    'channel_source': self.channel_source,
+                                    'pairing_required': bool(getattr(info, 'PairingRequired', False)),
+                                    'rssi': getattr(info, 'RSSI', None),
+                                    'configuration': report}
+                        self.device_info.emit(info_out)
+                        self._status(f"Connected {spec.label} | serial {info_out['serial']} | "
+                                     f"battery {self.battery}% | {self.fs} Hz | {len(self.channels)} channels")
+                    self.device.signalDataReceived = self._on_signal
+                    if self.auto_contact and not streamed:
+                        self._measure_contact(resume=False)
+                    if not self._running:
+                        return
+                    if streamed:
+                        self._reset_stream('Reconnected after connection loss')
+                        self._status(f'Reconnected after connection loss | {spec.label} | '
+                                     f'{self.fs} Hz | {len(self.channels)} channels')
+                    else:
+                        self._reset_stream('Connected; collecting five seconds')
+                    self.device.exec_command(SensorCommand.StartSignal)
+                    streaming = True
+                    streamed = True
+                    self.mode = 'signal'
+                    start = last_report = time.monotonic()
+                    self._drain_samples()
+                    while self._running:
+                        if self.contact_requested.is_set():
+                            self.contact_requested.clear()
+                            self._measure_contact(resume=True)
+                            start = time.monotonic()
+                        self._drain_samples()
+                        now = time.monotonic()
+                        if now - (self.last_sample_at or start) > 8:
+                            raise RuntimeError('No EEG for 8s. Check power/range, then reconnect.')
+                        if now - last_report >= 1:
+                            if self.device.state != SensorState.StateInRange:
+                                raise RuntimeError('Headset disconnected or out of range')
+                            self.battery = self.device.batt_power
+                            self.rate_history.append((now, self.sample_count))
+                            rate = None
+                            if len(self.rate_history) > 1:
+                                t0, n0 = self.rate_history[0]
+                                rate = (self.sample_count - n0) / (now - t0)
+                            metrics = {'samples': self.sample_count, 'rate_hz': rate,
+                                       'gap_events': self.tracker.gap_events,
+                                       'counter_anomalies': getattr(self.tracker, 'counter_anomalies', 0),
+                                       'battery': self.battery, 'mode': self.mode,
+                                       'channels': list(self.channels),
+                                       'last_sample_age_s': None if self.last_sample_at is None
+                                       else now - self.last_sample_at}
+                            self.metrics_received.emit(metrics)
+                            previous = self.sample_count - int(rate or 0)
+                            if len(self.rate_history) == 1 or self.sample_count // (7500 * max(1, len(self.channels) // 4)) \
+                                    != previous // (7500 * max(1, len(self.channels) // 4)):
+                                self._status(f'Live EEG | {self.sample_count} samples | '
+                                             f'{len(self.channels)} channels | gaps {self.tracker.gap_events}')
+                            last_report = now
+                        time.sleep(.01)
+                    return
+                except Exception as exc:
+                    if original_error is None:
+                        original_error = exc
+                    if not streamed:
+                        # The first connect failed before any stream: report it
+                        # and end the thread, exactly as before auto-reconnect.
+                        raise
+                    if not self._running:
+                        # Deliberate stop: end quietly, never reconnect.
+                        return
+                    # The stream was lost. Tear the failed device down now (a
+                    # partially-created sensor from a failed attempt too) so the
+                    # next attempt starts from a clean slate.
+                    self._cleanup_device(streaming)
+                    streaming = False
+                    while attempts < self.max_reconnect:
+                        attempts += 1
+                        self.mode = 'reconnecting'
+                        self.stream_reset.emit(f'Connection lost — reconnecting '
+                                               f'(attempt {attempts} of {self.max_reconnect})')
+                        self._status(f'Connection lost ({exc}) — reconnecting '
+                                     f'(attempt {attempts} of {self.max_reconnect})...')
+                        backoffs = self.reconnect_backoff
+                        delay = backoffs[min(attempts, len(backoffs)) - 1] if backoffs else 0.
+                        deadline = time.monotonic() + max(0., float(delay))
+                        while self._running and time.monotonic() < deadline:
+                            time.sleep(min(.05, max(0., deadline - time.monotonic())))
+                        if not self._running:
+                            return
+                        # A scanner that saw the drop can be stale: every attempt
+                        # starts with a fresh Scanner looking for the SAME address.
+                        self.scanner = None
+                        found = self._scan()
+                        if not self._running:
+                            return
+                        wanted = str(getattr(self.sensor_info, 'Address', self.target_address)
+                                     or self.target_address).upper()
+                        fresh = found.get(wanted)
+                        if fresh is None:
+                            self._status(f'Reconnect attempt {attempts}: {wanted} not seen during '
+                                         'rescan (headset off or out of range)')
+                            continue
+                        family = getattr(fresh, 'SensFamily', None)
+                        if family is not None:
+                            fresh_spec = devices.spec_for_family(family)
+                            if fresh_spec is not None and fresh_spec.key != spec.key:
+                                self._status(f'Reconnect attempt {attempts}: {wanted} re-appeared '
+                                             f'as {devices.family_name(family)}; refusing to '
+                                             'switch devices')
+                                continue
+                        info = fresh
+                        self.sensor_info = fresh
+                        break
+                    else:
+                        self.mode = 'error'
+                        self._status(f'Connection error: {original_error}')
+                        self.stream_reset.emit(
+                            f'Connection lost; auto-reconnect failed after {self.max_reconnect} '
+                            'attempts — power-cycle the headset and press Scan again')
+                        return
         except Exception as exc:
             self.mode = 'error'
             self._status(f'Connection error: {exc}')
             self.stream_reset.emit('Connection lost; previous window invalidated')
         finally:
-            if self.device is not None:
+            self._cleanup_device(streaming)
+            current = self.scanner if self.scanner is not None else scanner
+            if current is not None:
                 try:
-                    if streaming:
-                        self.device.exec_command(SensorCommand.StopSignal)
-                except Exception as exc:
-                    self._status(f'Stop warning: {exc}')
-                try:
-                    self.device.signalDataReceived = None
+                    current.sensorsChanged = None
                 except Exception:
                     pass
                 try:
-                    self.device.resistDataReceived = None
-                except Exception:
-                    pass
-                try:
-                    self.device.disconnect()
-                except Exception as exc:
-                    self._status(f'Disconnect warning: {exc}')
-                self.device = None
-            if scanner is not None:
-                try:
-                    scanner.sensorsChanged = None
-                except Exception:
-                    pass
-                try:
-                    scanner.stop()
+                    current.stop()
                 except Exception as exc:
                     self._status(f'Scanner cleanup warning: {exc}')
             if not self._running:

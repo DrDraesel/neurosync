@@ -46,6 +46,7 @@ import patient_report
 import qeeg
 import qeeg_ui
 import storage
+import study
 import topomap
 from simfeed import SimulatedEEGClient
 
@@ -575,6 +576,14 @@ class NeuroSyncApp(QMainWindow):
         self.total_received = 0
         self.plot_updates = 0
         self.session_count = 0
+        self.study_rows = []            # plain list: EVERY sample row from Start study to Stop study
+        self.study_packets = []         # parallel packet numbers for the study rows
+        self.study_started_monotonic = None
+        self.study_started_utc = None
+        self.study_fs = None
+        self.study_resets = 0           # stream resets observed while a study ran
+        self.study_capped = False
+        self.ai_pending_session_folder = None   # saved study waiting for its AI note
         self.client = None
         self.runtime_enabled = autostart and not smoke
         self._build_ui()
@@ -619,6 +628,8 @@ class NeuroSyncApp(QMainWindow):
         self.connect_button = QPushButton('Connect')
         self.disconnect_button = QPushButton('Disconnect')
         self.contact_button = QPushButton('Check electrodes (pauses EEG)')
+        self.start_study_button = QPushButton('Start study (record)')
+        self.stop_study_button = QPushButton('Stop study')
         self.save_button = QPushButton('Save session (permanent)')
         self.history_button = QPushButton('History…')
         self.second_button = QPushButton('Second device window…')
@@ -628,6 +639,7 @@ class NeuroSyncApp(QMainWindow):
         self.device_combo.addItem('No scan yet — press "Scan devices"', None)
         for widget in (self.scan_button, self.device_combo, self.connect_button,
                        self.disconnect_button, self.contact_button,
+                       self.start_study_button, self.stop_study_button,
                        self.save_button, self.history_button,
                        self.second_button, self.report_button):
             toolbar.addWidget(widget)
@@ -639,6 +651,9 @@ class NeuroSyncApp(QMainWindow):
         self.subject_label = QLabel('Subject: not set (required before saving)')
         self.subject_label.setStyleSheet('color:#9A5B00;')
         controls.addWidget(self.subject_button); controls.addWidget(self.subject_label)
+        self.study_status = QLabel('')
+        self.study_status.setStyleSheet('font-weight:700; color:#C8341C; padding-left:10px;')
+        controls.addWidget(self.study_status)
         controls.addStretch()
         controls.addWidget(QLabel('Band waveform channel'))
         self.channel_select = QComboBox(); self.channel_select.addItems(list(self.channels))
@@ -1027,6 +1042,8 @@ class NeuroSyncApp(QMainWindow):
         self.disconnect_button.clicked.connect(self.disconnect_device)
         self.contact_button.clicked.connect(self.request_contact)
         self.save_button.clicked.connect(self.save_session_clicked)
+        self.start_study_button.clicked.connect(self.start_study)
+        self.stop_study_button.clicked.connect(lambda: self.stop_study('user'))
         self.history_button.clicked.connect(self.show_history)
         self.subject_button.clicked.connect(self.set_subject)
         self.export5_button.clicked.connect(self.save_clicked)
@@ -1234,6 +1251,15 @@ class NeuroSyncApp(QMainWindow):
         self.packet_numbers.extend(batch['packnums'])
         self.last_received = batch['arrived_monotonic']
         self.total_received = batch['sample_count']
+        if self.study_started_monotonic is not None:
+            # Full study span: every row is kept (NOT the 60 s deque), from
+            # Start study until Stop study or the 60-minute cap.
+            self.study_rows.extend(
+                [float(value) for value in row] for row in batch['samples_uv'])
+            self.study_packets.extend(batch['packnums'])
+            if study.reached_cap(self.study_rows, self.study_fs,
+                                 self.study_started_monotonic, time.monotonic()):
+                self.stop_study(reason='cap')
 
     def handle_status(self, text):
         self.statusBar().showMessage(text)
@@ -1257,10 +1283,15 @@ class NeuroSyncApp(QMainWindow):
 
     def update_buttons(self):
         running = self.client is not None and self.client.isRunning()
+        streaming = running and getattr(self.client, 'mode', None) == 'signal'
+        study_active = self.study_started_monotonic is not None
         self.connect_button.setEnabled(not running)
         self.disconnect_button.setEnabled(running)
         self.contact_button.setEnabled(running and self.client.mode == 'signal')
         self.scan_button.setEnabled(not running)
+        self.start_study_button.setEnabled(streaming and study.subject_ready(self.subject)
+                                           and not study_active)
+        self.stop_study_button.setEnabled(study_active)
         self.save_button.setEnabled(len(self.samples) >= self.fs * 5)
         self.export5_button.setEnabled(len(self.samples) >= self.fs * 5)
         busy = self.ai_worker is not None and self.ai_worker.isRunning()
@@ -1285,6 +1316,7 @@ class NeuroSyncApp(QMainWindow):
         self.subject_label.setStyleSheet('color:#1F7A4B;')
         self.refresh_trend()
         self.load_baseline()
+        self.update_buttons()
 
     # --------------------------------------------------------------- baseline
     def load_baseline(self):
@@ -1510,6 +1542,221 @@ class NeuroSyncApp(QMainWindow):
         self.statusBar().showMessage(f'Session saved locally: {folder}')
         self.refresh_history_summary()
         self.refresh_trend()
+
+    # ------------------------------------------------------- study recording
+    def start_study(self):
+        """Begin a full-duration study: every row is buffered until Stop study.
+
+        The study rows are a plain list (self.study_rows), NOT the rolling
+        60 s analysis deque, so a study longer than a minute keeps everything.
+        The 60-minute cap auto-stops and saves; nothing is silently dropped.
+        """
+        if self.study_started_monotonic is not None:
+            return
+        if not study.subject_ready(self.subject):
+            QMessageBox.warning(
+                self, 'Study recording',
+                'Set a subject first ("Set subject…") so the study can be stored under '
+                'recordings/subjects/.')
+            return
+        running = self.client is not None and self.client.isRunning()
+        if not (running and getattr(self.client, 'mode', None) == 'signal'):
+            QMessageBox.warning(
+                self, 'Study recording',
+                'The device is not streaming live yet — connect and wait for samples, then '
+                'start the study.')
+            return
+        self.study_rows = []
+        self.study_packets = []
+        self.study_started_monotonic = time.monotonic()
+        self.study_started_utc = datetime.now(timezone.utc).isoformat()
+        self.study_fs = int(self.fs)
+        self.study_resets = 0
+        self.study_capped = False
+        self.study_status.setText(study.status_label(0.0))
+        self.statusBar().showMessage(
+            'STUDY recording: every sample row is buffered until Stop study '
+            '(auto-stops at the 60-minute cap).')
+        self.update_buttons()
+
+    def _study_matrix(self, rows):
+        """(scalp channel names, float matrix) of the study rows, or (None, None)."""
+        try:
+            matrix = np.asarray(rows, dtype=float)
+        except (TypeError, ValueError):
+            return None, None
+        if matrix.ndim != 2 or matrix.shape[1] != len(self.channels):
+            return None, None
+        names = self._analysis_channels()
+        if len(names) == len(self.channels):
+            return names, matrix
+        indices = [self.channels.index(name) for name in names]
+        return names, matrix[:, indices]
+
+    def _study_analysis(self, rows, fs, resets):
+        """Band analysis built from the FULL study span (never the live deque).
+
+        The five-second window covers the final five seconds of the study; the
+        stable multi-epoch estimate covers every row. Both use the existing
+        eeg_analysis gates (Welch bands, per-channel stats, quality heuristics,
+        predominant band). Contact age is the TRUE age of the last check at
+        stop time, so a long study without a recent re-check is honestly
+        flagged stale instead of pretending the gates passed.
+        """
+        names, matrix = self._study_matrix(rows)
+        now = time.monotonic()
+        contact_ohms = self.contact['ohms'] if self.contact else None
+        contact_age_s = (None if self.contact is None
+                         else now - self.contact['measured_monotonic'])
+        minimum = devices.aggregate_min_valid(names)
+        five_second = analyze_window(matrix, fs=fs, notch_hz=self._notch(),
+                                     contact_ohms=contact_ohms,
+                                     contact_age_s=contact_age_s,
+                                     continuous=(resets == 0), channels=names,
+                                     min_valid_channels=minimum)
+        stable = analyze_stable(matrix, fs=fs, notch_hz=self._notch(),
+                                contact_ohms=contact_ohms,
+                                contact_age_s=contact_age_s,
+                                continuous=(resets == 0), channels=names,
+                                min_valid_channels=minimum)
+        return five_second, stable, contact_age_s
+
+    def stop_study(self, reason='user'):
+        """End the study: save the FULL span, then auto-run the AI doctor.
+
+        The analysis and save run synchronously like the quick-save path; the
+        AI doctor request runs on the existing async worker (AIDoctorWorker)
+        so the UI is not blocked while the model answers. When the note
+        arrives it is written into the saved session's summary.json together
+        with its model/generated_at/provenance.
+        """
+        if self.study_started_monotonic is None:
+            return
+        rows, packets = self.study_rows, self.study_packets
+        started_monotonic = self.study_started_monotonic
+        started_utc = self.study_started_utc
+        fs = int(self.study_fs or self.fs)
+        resets = int(self.study_resets)
+        facts = study.span_facts(rows, fs, started_monotonic, time.monotonic())
+        capped = reason == 'cap' or bool(facts['capped'])
+        # Deactivate FIRST: rows arriving while the save runs must not leak in.
+        self.study_rows, self.study_packets = [], []
+        self.study_started_monotonic = None
+        self.study_started_utc = None
+        self.study_fs = None
+        self.study_resets = 0
+        self.study_capped = bool(capped)
+        self.update_buttons()
+        if not rows:
+            self.study_status.setText('Study stopped — nothing recorded (no rows).')
+            self.statusBar().showMessage('Study stopped with no recorded rows; nothing was saved.')
+            return
+        subject = self.subject
+        if not isinstance(subject, dict) or not study.subject_ready(subject):
+            QMessageBox.warning(
+                self, 'Study recording',
+                'The study was recorded but no subject is set, so it cannot be stored. '
+                'Set a subject and record again — the rows were not saved.')
+            self.study_status.setText('Study stopped — no subject set; the rows were NOT saved.')
+            return
+        names, matrix = self._study_matrix(rows)
+        if names is None:
+            QMessageBox.warning(
+                self, 'Study recording',
+                'The recorded rows could not be converted to a numeric matrix; the study '
+                'was not saved.')
+            self.study_status.setText('Study stopped — unusable rows; NOT saved.')
+            return
+        five_second, stable, contact_age_s = self._study_analysis(rows, fs, resets)
+        span_s = float(facts['recorded_span_s'])
+        charts = self._session_charts()
+        raw_span_note = (
+            f'Raw CSV holds the full study recording: every sample row from Start study to '
+            f'Stop study ({span_s} s, {len(rows)} rows). The study auto-stopped at the '
+            f'60-minute cap and was saved without dropping rows.'
+            if capped else
+            f'Raw CSV holds the full study recording: every sample row from Start study to '
+            f'Stop study ({span_s} s, {len(rows)} rows).')
+        summary = {
+            'started_at': started_utc,
+            'stopped_at': datetime.now(timezone.utc).isoformat(),
+            'device_type': self.device_metadata.get('device_key', 'unknown'),
+            'device_label': self.device_metadata.get('device_label', 'unknown'),
+            'device': self.device_metadata,
+            'simulated': bool(self.simulated),
+            'family': self.device_metadata.get('family'),
+            'channels': list(self.channels),
+            'scalp_channels': list(self.device_metadata.get('scalp_channels') or
+                                   devices.scalp_channels(self.channels)),
+            'poly_channels': list(self.device_metadata.get('poly_channels') or
+                                  devices.poly_channels(self.channels)),
+            'channel_source': self.device_metadata.get('channel_source', 'unknown'),
+            'fs_hz': fs,
+            'raw_rows': len(rows),
+            'duration_s': round(span_s, 3),
+            'recorded_span_s': round(span_s, 3),
+            'raw_span_note': raw_span_note,
+            'notch_hz': self._notch(),
+            'analysis': five_second,
+            'stable_estimate': stable,
+            'contact': self.contact,
+            'transport': self.transport_metrics,
+            'study': {'kind': 'study',
+                      'stop_reason': 'cap' if capped else 'user',
+                      'capped': bool(capped),
+                      'recorded_span_s': round(span_s, 3),
+                      'raw_rows': len(rows),
+                      'stream_resets': resets,
+                      'contact_age_at_stop_s': (None if contact_age_s is None
+                                                else round(contact_age_s, 1))},
+            'methodology': 'METHODS.md',
+            'limits': 'Engineering signal-quality estimates only: not a diagnosis, not a clinical '
+                      'measurement, no mental-state, emotion or sleep-stage inference.',
+        }
+        estimate, estimate_source = self._current_estimate()
+        vs_baseline = baseline.vs_baseline_for_summary(
+            self.baseline, estimate, source=estimate_source or 'stable',
+            device=self.device_metadata)
+        if vs_baseline is not None:
+            summary['vs_baseline'] = vs_baseline
+        header = (['sample_index', 'relative_time_s', 'packet_number']
+                  + [f'raw_{name}_uV' for name in self.channels])
+
+        def study_data_rows():
+            # Generator: the full study is streamed to the CSV without building
+            # a second in-memory copy of up to 900,000 rows. zip_longest keeps
+            # every row in the file even if a packet number ever went missing.
+            from itertools import zip_longest
+            for index, (number, values) in enumerate(zip_longest(packets, rows)):
+                if values is None:
+                    break
+                yield [index, round(index / fs, 6), '' if number is None else number,
+                       *values]
+
+        try:
+            folder = storage.save_session(SUBJECT_ROOT, subject['name'],
+                                          subject.get('phone', ''), summary, header,
+                                          study_data_rows(), charts=charts)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, 'Study save failed', str(exc))
+            self.study_status.setText('Study save FAILED — the rows were not stored.')
+            return
+        self.session_count += 1
+        elapsed_text = study.format_elapsed(span_s)
+        if capped:
+            self.study_status.setText(f'STUDY {elapsed_text} · saved at the 60-minute cap')
+            self.statusBar().showMessage(study.CAP_MESSAGE + f' — {folder}')
+        else:
+            self.study_status.setText(f'Study saved · {elapsed_text} · {len(rows)} rows')
+            self.statusBar().showMessage(f'Study saved locally: {folder}')
+        self.refresh_history_summary()
+        self.refresh_trend()
+        # AUTO AI doctor over the study numbers. The request runs on the
+        # existing async worker (QThread), so the UI stays responsive; the
+        # reply lands in handle_ai_note and is also written into the saved
+        # session's summary.json (model / generated_at / provenance included).
+        self.ai_pending_session_folder = folder
+        self.run_ai_doctor(report=five_second, stable=stable)
 
     def _session_charts(self):
         """PNG bytes per chart; failures are reported instead of hidden."""
@@ -2151,13 +2398,15 @@ class NeuroSyncApp(QMainWindow):
             return
         self.run_ai_doctor()
 
-    def run_ai_doctor(self):
+    def run_ai_doctor(self, report=None, stable=None):
         if self.ai_worker is not None and self.ai_worker.isRunning():
             return
-        if self.last_report is None and self.last_stable is None:
+        report = self.last_report if report is None else report
+        stable = self.last_stable if stable is None else stable
+        if report is None and stable is None:
             self.ai_status.setText('No analysis yet: wait for at least five seconds of valid EEG.')
             return
-        payload = ai_doctor.build_payload(report=self.last_report, stable=self.last_stable,
+        payload = ai_doctor.build_payload(report=report, stable=stable,
                                           transport=self.transport_metrics,
                                           device=self.device_metadata,
                                           contact=self.contact['ohms'] if self.contact else None)
@@ -2190,6 +2439,21 @@ class NeuroSyncApp(QMainWindow):
                 self.ai_status.setText('API model unavailable — check AI_API_URL / AI_API_KEY and ask again.')
             else:
                 self.ai_status.setText('Local model unavailable — start Ollama and ask again.')
+        pending = getattr(self, 'ai_pending_session_folder', None)
+        if pending:
+            # A study stop queued this note for the just-saved session: write
+            # it into summary.json (same atomic path the qEEG export uses), so
+            # the stored study carries its AI text with model/time/provenance.
+            self.ai_pending_session_folder = None
+            try:
+                summary_path = Path(pending) / storage.SUMMARY_FILE
+                saved = storage.read_json_object(summary_path)
+                if isinstance(saved, dict):
+                    saved['ai_doctor'] = note
+                    storage.write_json_atomic(summary_path, saved)
+            except (OSError, ValueError) as exc:
+                self.statusBar().showMessage(
+                    f'AI note shown, but writing it into the saved study failed: {exc}')
         self.update_buttons()
 
     # -------------------------------------------------------------- live chat
@@ -2353,6 +2617,8 @@ class NeuroSyncApp(QMainWindow):
             self.contact_aux_label.setText('A1/A2/Bias: not reported by this device.')
 
     def reset_window(self, reason):
+        if self.study_started_monotonic is not None:
+            self.study_resets += 1     # a study keeps recording; the gap is recorded honestly
         self.samples.clear(); self.packet_numbers.clear()
         self.last_received = None; self.last_report = None; self.last_stable = None
         for curve in list(self.raw_curves.values()) + list(self.band_curves.values()):
@@ -2384,6 +2650,9 @@ class NeuroSyncApp(QMainWindow):
 
     def update_plots(self):
         self.update_buttons()
+        if self.study_started_monotonic is not None and widget_alive(self.study_status):
+            self.study_status.setText(study.status_label(
+                study.elapsed_seconds(self.study_started_monotonic, time.monotonic())))
         if not self.samples:
             return
         data = np.asarray(self.samples, dtype=float)

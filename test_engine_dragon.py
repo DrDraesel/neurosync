@@ -181,6 +181,7 @@ class DragonConnectionTests(unittest.TestCase):
         sensor = DragonSensorFixture()
         scanner = ScannerFixture([dragon_info()], sensor)
         client = self.make_client(scanner, dragon_info())
+        sensor.client = client          # end the session after the first stream
         seen = []
         scanner_factory = lambda filters: (seen.append(list(filters)) or scanner)
         client.scanner_factory = scanner_factory

@@ -11,6 +11,11 @@ open anywhere or print to PDF:
 * a cross-session history table (relative power % per band, dominant band),
 * an offline "how to read these numbers" interpretation helper
   (``ai_doctor.local_interpretation``),
+* a "Reading method (for the clinician)" section condensing
+  ``docs/QEEG-RESEARCH.md`` (the doctor-channel reading method, quoted as its
+  own source): what the five sheet rows, the z colours and the reference block
+  kinds mean here, what each device can and cannot support, and the rule that
+  interpretation is clinician-led,
 
 Everything is generated locally from files on this PC and the file itself is
 never uploaded. If an AI API is configured, only the derived numbers behind the
@@ -37,6 +42,33 @@ BAND_ORDER = ('Delta', 'Theta', 'Alpha', 'Beta', 'Gamma')
 MAX_CHART_MB = 40.0
 QEEG_NOTE = 'Not a normative clinical database; educational display only.'
 RAW_TRACE_REMINDER = 'Check the raw traces before trusting a map — artifact looks like a region.'
+
+# Reading-method section (for the clinician). The source line is quoted
+# verbatim from docs/QEEG-RESEARCH.md; the method itself is condensed from the
+# same document and from docs/QEEG-GRID-SPEC.md. Educational only: it invents
+# no norms and adds no diagnostic claim.
+READING_METHOD_HEADING = 'Reading method (for the clinician)'
+READING_METHOD_SOURCE = ('Source: @supernormalbydrtrishleigh '
+                         '(Dr. Trish Leigh, Leigh Brain & Spine), reviewed 2026-11-03.')
+
+READING_ROWS = (
+    ('Absolute power', 'how much energy (µV²) that band carries at that site — how "charged" it is.'),
+    ('Relative power', 'that band\'s share of the total at that site — which of the five speeds dominates.'),
+    ('Amplitude asymmetry', 'left vs right difference at homologous sites.'),
+    ('Coherence', 'how similarly two sites behave in that band (shared information; '
+                  'too much = rigidity, too little = poor communication).'),
+    ('Phase lag', 'the timing offset between sites — how late or early the signal arrives.'),
+)
+
+# Reference kinds with the exact wording the grid spec allows (never reworded
+# into a claim of a clinical database).
+REFERENCE_KINDS = (
+    ('session', 'self-referenced vs this session\'s channel mean'),
+    ('baseline', 'vs this subject\'s saved baseline (date)'),
+    ('norm', 'vs local norm n=…, age … (a local file, only usable once 20 or more '
+             'subjects exist and the age band is recorded)'),
+    ('none', 'raw values — no reference selected'),
+)
 
 # Electrode limitation of each supported headset, printed next to the numbers it
 # produced: a four-electrode BrainBit is not a 19-channel qEEG, and the
@@ -245,6 +277,70 @@ def _qeeg_html(session: dict, budget: dict) -> str:
             f"<p class='meta'><b>{_esc(QEEG_NOTE)}</b></p>")
 
 
+def _reading_method_html() -> str:
+    """Condensed qEEG reading method for the clinician, sourced from the docs.
+
+    Explains what the five sheet rows, the z colours and the reference block
+    kinds mean in THIS app, states per device what the numbers can and cannot
+    support, and closes with the rule that interpretation is clinician-led.
+    It is an educational description of the reading method only: no invented
+    norms, no diagnostic claim, and every honesty banner elsewhere stays.
+    """
+    row_rows = ''.join(
+        f'<tr><td><b>{_esc(name)}</b></td><td>{_esc(meaning)}</td></tr>'
+        for name, meaning in READING_ROWS)
+    ref_rows = ''.join(
+        f'<tr><td>{_esc(kind)}</td><td>{_esc(wording)}</td></tr>'
+        for kind, wording in REFERENCE_KINDS)
+    return f"""
+<h2>{_esc(READING_METHOD_HEADING)}</h2>
+<div class="note"><b>Method source.</b> The qEEG sheet and these notes follow the
+reading method taught on the source channel below; the app re-implements the sheet
+layout and colour rule, not a licensed normative database.<br>
+<b>{_esc(READING_METHOD_SOURCE)}</b></div>
+<div class="note"><b>The five rows of the sheet.</b>
+<table>
+<tr><th>Row</th><th>What it means here</th></tr>{row_rows}
+</table></div>
+<div class="note"><b>Z-scores and colours.</b> The sheet legend is a z-scale from −3 to
++3: green = at the reference, blue = below, yellow → orange → red = above. In this app
+the z is always computed against the reference block printed with the sheet — never
+against an age-matched clinical database, because none is used here.</div>
+<div class="note"><b>Reference block kind.</b> Every sheet prints which reference its
+z-scores were computed against; a reference is never invented.
+<table>
+<tr><th>Kind</th><th>Meaning (printed with the sheet)</th></tr>{ref_rows}
+</table>
+A <code>norm</code> is a local file that only becomes usable once 20 or more subjects
+exist with the age band recorded; until then the app does not call it normative.</div>
+<div class="note"><b>What the devices can and cannot support.</b>
+<ul>
+<li><b>BrainBit (4 channels, O1/O2/T3/T4, shared reference)</b> — screening-grade view at
+four sites: band powers, relative shares, two asymmetry pairs (O1/O2, T3/T4) and at most
+six coherence/phase pairs. Its four-site map is mostly extrapolation and is NOT a
+19-channel qEEG. It can support a coarse spectral look at four sites; it cannot support
+a regional or whole-brain qEEG reading.</li>
+<li><b>DragonEEG (21 scalp channels + 3 auxiliary)</b> — qEEG-grade recording: the device
+the 5×5 sheet is designed for (21 sites, nine homologous asymmetry pairs, about 200
+coherence/phase pairs). The headset is not a medical device and this app is not a
+medical device, so its output stays a descriptive research recording, not a clinical
+measurement.</li>
+</ul>
+<b>These numbers can support:</b> a descriptive spectral summary of the recorded sites;
+a within-subject comparison against that subject's own saved baseline of the same
+condition; documentation of recording conditions and measured signal quality.<br>
+<b>They cannot support:</b> a diagnosis, a screening or treatment decision, a
+mental-state claim, a comparison with an age-matched normative database, any conclusion
+beyond the recorded sites, or any conclusion from a single number or a single head —
+read clusters across rows and bands, and check the raw traces first (artifact looks
+like a region).</div>
+<div class="note"><b>Interpretation is clinician-led.</b> Nothing in this document
+interprets the numbers medically. Whether any number is clinically meaningful is for
+the clinician reviewing the original recording to decide; this section only explains
+the method the sheet uses.</div>
+"""
+
+
 def _device_electrodes(summary: dict) -> str:
     """Electrode limitation of the headset that recorded this session."""
     device = summary.get('device') or {}
@@ -281,9 +377,20 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
     title = f"Session {summary.get('started_at') or session.get('path').name}"
     quality = ('state: ' + ('VALID' if report.get('valid') else 'not valid')
                + (f" · {report.get('reason')}" if report.get('reason') else ''))
-    span_note = (summary.get('raw_span_note')
-                 or 'the rolling analysis buffer stored with the session, not the study '
-                    'length')
+    recorded_span_s = summary.get('recorded_span_s')
+    if recorded_span_s is not None:
+        # Full-duration study: raw_rows/duration_s are the true recording, and
+        # recorded_span_s is the authoritative span — print it as such.
+        span_bit = (f"recording span: {_fmt(recorded_span_s, 1, ' s')} "
+                    f"({_esc(summary.get('raw_rows'))} rows) — full-duration study")
+    else:
+        # Legacy/quick save: the raw CSV holds the rolling analysis buffer, not
+        # the whole session; keep the honest buffer wording.
+        span_note = (summary.get('raw_span_note')
+                     or 'the rolling analysis buffer stored with the session, not the '
+                        'study length')
+        span_bit = (f"raw buffer span: {_fmt(summary.get('duration_s'), 1, ' s')} "
+                    f"({_esc(summary.get('raw_rows'))} rows) — {_esc(span_note)}")
     clean_channels = (f"{report.get('channels_valid', '—')}/"
                       f"{report.get('channels_total', len(summary.get('channels') or []) or '—')}")
     meta_bits = [
@@ -291,8 +398,7 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
         f"channels: {_esc(', '.join(summary.get('channels') or []))}",
         f"electrodes: {_esc(_device_electrodes(summary))}",
         f"sampling: {_esc(summary.get('fs_hz'))} Hz · notch {_esc(summary.get('notch_hz'))} Hz",
-        f"raw buffer span: {_fmt(summary.get('duration_s'), 1, ' s')} "
-        f"({_esc(summary.get('raw_rows'))} rows) — {_esc(span_note)}",
+        span_bit,
         f"simulated: {'YES — pipeline demonstration, not measured EEG' if simulated else 'no'}",
         f"clean channels: {_esc(clean_channels)}",
         quality,
@@ -335,6 +441,17 @@ def _session_section(session: dict, index: int, budget: dict) -> str:
 </section>"""
 
 
+def _span_text(summary: dict) -> str:
+    """True recorded span for study sessions; buffer span for legacy/quick saves."""
+    recorded = summary.get('recorded_span_s')
+    if recorded is not None:
+        return f'{_fmt(recorded, 1)} s'
+    duration = summary.get('duration_s')
+    if duration is None:
+        return '—'
+    return f'{_fmt(duration, 1)} s (buffer)'
+
+
 def _history_table(sessions: list) -> str:
     rows = []
     for session in sessions:
@@ -348,10 +465,12 @@ def _history_table(sessions: list) -> str:
         rows.append(
             f"<tr><td>{_esc(summary.get('started_at'))}</td>"
             f"<td>{_esc(summary.get('device_label'))}</td>"
+            f"<td>{_span_text(summary)}</td>"
             f"<td>{_esc(estimate.get('dominant'))}</td>"
             f"<td>{_fmt(estimate.get('dominant_pct'), 1)}</td>"
             f"{cells}</tr>")
-    return ('<table><tr><th>Session</th><th>Device</th><th>Dominant</th><th>Dominant %</th>'
+    return ('<table><tr><th>Session</th><th>Device</th><th>Span</th><th>Dominant</th>'
+            '<th>Dominant %</th>'
             + ''.join(f'<th>{name} %</th>' for name in BAND_ORDER) + '</tr>'
             + ''.join(rows) + '</table>')
 
@@ -438,6 +557,7 @@ def build(root, name: str, phone: str = '', out_path=None) -> Path:
 {_history_table(sessions)}
 <h2>How to read these numbers (offline helper)</h2>
 {helper_html}
+{_reading_method_html()}
 {sections}
 <p class="honesty">{_esc(ai_doctor.DISCLAIMER)} Not a medical device. Descriptive,
  engineering-grade spectral summary; the electrode limitation of the recording headset is

@@ -57,7 +57,8 @@ class ReportFixture(unittest.TestCase):
     def seed(self, name='Report Person', phone='555', *, simulated=False,
              ai_text='', with_charts=True, device_type='brainbit_classic',
              device_label=None, channels=('O1', 'O2', 'T3', 'T4'),
-             duration_s=4.8, raw_span_note=None, ai_record=None):
+             duration_s=4.8, raw_span_note=None, ai_record=None,
+             raw_rows=1200, recorded_span_s=None):
         channels = tuple(channels)
         summary = {
             'started_at': datetime.now(timezone.utc).isoformat(),
@@ -67,7 +68,7 @@ class ReportFixture(unittest.TestCase):
             'device': {'simulated': True} if simulated else {},
             'simulated': simulated,
             'channels': list(channels),
-            'fs_hz': 250, 'raw_rows': 1200, 'duration_s': duration_s,
+            'fs_hz': 250, 'raw_rows': raw_rows, 'duration_s': duration_s,
             'notch_hz': 60,
             'analysis': fake_report(),
             'stable_estimate': dict(fake_report(), bands=_bands(alpha=48.0),
@@ -75,11 +76,13 @@ class ReportFixture(unittest.TestCase):
                                     peak_hz=10.1, epochs_used=6, epochs_total=6),
             'ai_doctor': (ai_record if ai_record is not None
                           else ({'ok': True, 'text': ai_text} if ai_text else None)),
-            'contact': None, 'transport': {'samples': 1200},
+            'contact': None, 'transport': {'samples': raw_rows},
             'limits': 'Engineering estimates only.',
         }
         if raw_span_note is not None:
             summary['raw_span_note'] = raw_span_note
+        if recorded_span_s is not None:
+            summary['recorded_span_s'] = recorded_span_s
         header = ['sample_index', 'relative_time_s', 'packet_number',
                   *[f'raw_{name}_uV' for name in channels]]
         rows = [[i, i / 250.0, i] + [0.0] * len(channels) for i in range(30)]
@@ -161,6 +164,57 @@ class TestPatientReport(ReportFixture):
         self.assertNotIn('duration: 60.0 s', text)
         self.assertIn('raw buffer span: 60.0 s', text)
         self.assertIn('not the whole session length', text)
+        self.assertIn('60.0 s (buffer)', text)          # history Span column
+
+    def test_study_span_prints_the_true_recording_span(self):
+        text = self.build_text('study_span.html', duration_s=180.0,
+                               raw_rows=45000, recorded_span_s=180.0)
+        self.assertIn('recording span: 180.0 s (45000 rows)', text)
+        self.assertIn('full-duration study', text)
+        self.assertNotIn('raw buffer span', text)
+        self.assertNotIn('s (buffer)', text)            # history cell is the true span
+        self.assertIn('<th>Span</th>', text)
+
+    def test_reading_method_section_is_present_and_sourced(self):
+        text = self.build_text('reading_method.html')
+        self.assertIn(patient_report.READING_METHOD_HEADING, text)
+        # the doctor-channel source line, verbatim as a constant, and rendered
+        # (the '&' of "Brain & Spine" is HTML-escaped in the document)
+        self.assertEqual(
+            patient_report.READING_METHOD_SOURCE,
+            'Source: @supernormalbydrtrishleigh '
+            '(Dr. Trish Leigh, Leigh Brain & Spine), reviewed 2026-11-03.')
+        self.assertIn('@supernormalbydrtrishleigh', text)
+        self.assertIn('(Dr. Trish Leigh, Leigh Brain &amp; Spine), reviewed 2026-11-03.',
+                      text)
+        # the five sheet rows and the colour/z rule
+        self.assertIn('Absolute power', text)
+        self.assertIn('Relative power', text)
+        self.assertIn('Amplitude asymmetry', text)
+        self.assertIn('Coherence', text)
+        self.assertIn('Phase lag', text)
+        self.assertIn('green = at the reference', text)
+        # reference block kinds, in the allowed wording
+        self.assertIn('self-referenced vs this session', text)
+        self.assertIn('saved baseline (date)', text)
+        self.assertIn('no reference selected', text)
+        # per-device honest capability statements
+        self.assertIn('screening-grade view at', text)
+        self.assertIn('shared reference', text)
+        self.assertIn('NOT a\n19-channel qEEG', text)
+        self.assertIn('qEEG-grade recording', text)
+        self.assertIn('21 scalp channels + 3 auxiliary', text)
+        # clinician-led interpretation, no weakening of the honesty banners
+        self.assertIn('Interpretation is clinician-led', text)
+        self.assertIn('Not a medical device', text)
+        self.assertIn(ai_doctor.DISCLAIMER, text)
+
+    def test_reading_method_makes_no_diagnostic_or_norm_claims(self):
+        text = self.build_text('reading_method_honesty.html')
+        self.assertNotIn('NeuroGuide', text)
+        self.assertNotIn('age-matched clinical normative database', text)
+        self.assertIn('none is used here', text)          # z never against a clinical db
+        self.assertIn('does not call it normative', text)  # local norm guard
 
 
 class TestLocalInterpretation(unittest.TestCase):
